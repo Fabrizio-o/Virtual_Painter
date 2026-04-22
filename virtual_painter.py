@@ -131,10 +131,6 @@ WRIST = 0
 #  FLOOD FILL
 # ══════════════════════════════════════════════════════
 def flood_fill(image, seed_pt, fill_color, tolerance):
-    """
-    Relleno por inundacion tipo 'bote de pintura'.
-    Usa cv2.floodFill con tolerancia configurable.
-    """
     x, y = seed_pt
     h, w = image.shape[:2]
     if not (0 <= x < w and 0 <= y < h):
@@ -150,10 +146,6 @@ def flood_fill(image, seed_pt, fill_color, tolerance):
 
 
 def flood_fill_smooth(image, seed_pt, fill_color, tolerance):
-    """
-    Flood fill con suavizado de bordes para imagenes de colorear.
-    Aplica un leve blur en la frontera del area rellenada.
-    """
     filled    = flood_fill(image, seed_pt, fill_color, tolerance)
     diff      = cv2.absdiff(image, filled)
     diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
@@ -171,8 +163,6 @@ def flood_fill_smooth(image, seed_pt, fill_color, tolerance):
 #  SELECTOR DE IMAGENES
 # ══════════════════════════════════════════════════════
 class ImageSelector:
-    """Ventana de galeria para elegir imagen a colorear."""
-
     THUMB_W   = 200
     THUMB_H   = 160
     COLS      = 5
@@ -241,7 +231,6 @@ class ImageSelector:
         return canvas
 
     def show(self, W=1280, H=720):
-        """Muestra el selector. Retorna ruta elegida o None si se cancela."""
         win = "Seleccionar Imagen"
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(win, W, H)
@@ -278,20 +267,16 @@ class ImageSelector:
 
 
 # ══════════════════════════════════════════════════════
-#  SELECTOR DE COLORES (Todos los colores)
+#  SELECTOR DE COLORES
 # ══════════════════════════════════════════════════════
 class ColorPicker:
-    """Ventana para seleccionar cualquier color de una paleta extendida."""
-    
     COLS = 8
     SWATCH_W = 70
     SWATCH_H = 50
     BG_COLOR = (28, 28, 35)
     SEL_COLOR = (80, 200, 120)
-    
-    # Paleta extendida de colores
+
     EXTENDED_COLORS = [
-        # Fila 1: Grises y negro/blanco
         {"name": "Negro", "bgr": (1, 1, 1)},
         {"name": "Gris Oscuro", "bgr": (50, 50, 50)},
         {"name": "Gris", "bgr": (128, 128, 128)},
@@ -300,7 +285,6 @@ class ColorPicker:
         {"name": "Rojo Oscuro", "bgr": (0, 0, 100)},
         {"name": "Rojo", "bgr": (0, 0, 220)},
         {"name": "Rojo Brillante", "bgr": (0, 0, 255)},
-        # Fila 2: Naranjas y amarillos
         {"name": "Naranja Oscuro", "bgr": (0, 60, 160)},
         {"name": "Naranja", "bgr": (0, 120, 255)},
         {"name": "Amarillo Oscuro", "bgr": (0, 180, 200)},
@@ -309,7 +293,6 @@ class ColorPicker:
         {"name": "Lima", "bgr": (80, 255, 80)},
         {"name": "Verde Lima", "bgr": (120, 255, 0)},
         {"name": "Verde", "bgr": (0, 200, 60)},
-        # Fila 3: Verdes y cian
         {"name": "Verde Oscuro", "bgr": (0, 100, 40)},
         {"name": "Verde Bosque", "bgr": (0, 130, 60)},
         {"name": "Verde Oliva", "bgr": (0, 160, 80)},
@@ -318,7 +301,6 @@ class ColorPicker:
         {"name": "Cian Brillante", "bgr": (255, 255, 0)},
         {"name": "Azul Cielo", "bgr": (230, 150, 0)},
         {"name": "Azul", "bgr": (230, 80, 0)},
-        # Fila 4: Azules y violetas
         {"name": "Azul Real", "bgr": (200, 50, 0)},
         {"name": "Azul Marino", "bgr": (130, 30, 30)},
         {"name": "Azul Oscuro", "bgr": (100, 20, 20)},
@@ -327,7 +309,6 @@ class ColorPicker:
         {"name": "Purpura", "bgr": (180, 50, 150)},
         {"name": "Magenta", "bgr": (200, 0, 200)},
         {"name": "Rosa", "bgr": (160, 100, 240)},
-        # Fila 5: Rosas y marrones
         {"name": "Rosa Oscuro", "bgr": (100, 50, 120)},
         {"name": "Rosa Brillante", "bgr": (180, 150, 220)},
         {"name": "Salmon", "bgr": (100, 130, 180)},
@@ -336,7 +317,6 @@ class ColorPicker:
         {"name": "Marron", "bgr": (30, 80, 140)},
         {"name": "Marron Claro", "bgr": (60, 120, 160)},
         {"name": "Beige", "bgr": (130, 180, 200)},
-        # Fila 6: Tonos de piel
         {"name": "Piel Muy Clara", "bgr": (180, 200, 220)},
         {"name": "Piel Clara", "bgr": (140, 180, 210)},
         {"name": "Piel Clara Media", "bgr": (130, 160, 190)},
@@ -346,74 +326,66 @@ class ColorPicker:
         {"name": "Piel Muy Oscura", "bgr": (30, 50, 70)},
         {"name": "Cafe", "bgr": (25, 40, 65)},
     ]
-    
+
     def __init__(self):
         self.colors = self.EXTENDED_COLORS
         self.selected = 0
-        self.result = None
-        
+
     def _build_grid(self, W, H):
         canvas = np.full((H, W, 3), self.BG_COLOR, dtype=np.uint8)
         mg = 20
         n = len(self.colors)
-        rows = (n + self.COLS - 1) // self.COLS
-        
-        # Título
-        cv2.putText(canvas, "SELECCIONA UN COLOR", 
+
+        cv2.putText(canvas, "SELECCIONA UN COLOR",
                     (mg, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200,220,255), 2, cv2.LINE_AA)
         cv2.putText(canvas, "Flechas/WASD para navegar  |  ENTER para seleccionar  |  ESC para cancelar",
                     (mg, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (140,140,160), 1, cv2.LINE_AA)
-        
+
         start_y = 100
         for i, c in enumerate(self.colors):
             row = i // self.COLS
             col = i % self.COLS
             x = mg + col * (self.SWATCH_W + 8)
             y = start_y + row * (self.SWATCH_H + 25)
-            
+
             if y + self.SWATCH_H > H - 50:
                 break
-                
+
             if i == self.selected:
                 cv2.rectangle(canvas, (x-4, y-4), (x+self.SWATCH_W+4, y+self.SWATCH_H+4), self.SEL_COLOR, 3)
-            
-            # Swatch de color
+
             cv2.rectangle(canvas, (x, y), (x+self.SWATCH_W, y+self.SWATCH_H), c["bgr"], -1)
             cv2.rectangle(canvas, (x, y), (x+self.SWATCH_W, y+self.SWATCH_H), (80,80,90), 1)
-            
-            # Nombre del color
             cv2.putText(canvas, c["name"], (x, y+self.SWATCH_H+18),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180,180,200), 1, cv2.LINE_AA)
-        
-        # Instrucciones finales
-        cv2.putText(canvas, f"{n} colores disponibles", 
+
+        cv2.putText(canvas, f"{n} colores disponibles",
                     (mg, H-20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100,100,120), 1, cv2.LINE_AA)
         return canvas
-    
+
     def show(self, W=1280, H=720):
-        """Muestra el selector de colores. Retorna color seleccionado o None."""
         win = "Selector de Color"
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(win, W, H)
-        
+
         while True:
             cv2.imshow(win, self._build_grid(W, H))
             key = cv2.waitKey(50) & 0xFF
             n = len(self.colors)
-            
-            if key == 27:  # ESC
+
+            if key == 27:
                 cv2.destroyWindow(win)
                 return None
-            elif key in (13, 32):  # ENTER o ESPACIO
+            elif key in (13, 32):
                 cv2.destroyWindow(win)
                 return self.colors[self.selected]
-            elif key in (81, ord('a')):  # Izquierda
+            elif key in (81, ord('a')):
                 self.selected = (self.selected - 1) % n
-            elif key in (83, ord('d')):  # Derecha
+            elif key in (83, ord('d')):
                 self.selected = (self.selected + 1) % n
-            elif key in (82, ord('w')):  # Arriba
+            elif key in (82, ord('w')):
                 self.selected = max(0, self.selected - self.COLS)
-            elif key in (84, ord('s')):  # Abajo
+            elif key in (84, ord('s')):
                 self.selected = min(n-1, self.selected + self.COLS)
 
 
@@ -427,65 +399,51 @@ class VirtualPainter:
         self.W   = self.cfg["width"]
         self.H   = self.cfg["height"]
 
-        # Modo de aplicacion y herramienta activa
         self.app_mode    = APP_MODE_PAINT
         self.active_tool = TOOL_BRUSH
 
-        # Canvas de pintura libre
         self.canvas = np.zeros((self.H, self.W, 3), dtype=np.uint8)
 
-        # Modo Colorear
         self.color_image_path = None
         self.color_image_orig = None
         self.color_layer      = None
         self.fill_tolerance   = self.cfg["fill_tolerance"]
 
-        # Estado de dibujo
         self.drawing       = False
         self.prev_point    = None
         self.brush_size    = self.cfg["default_brush_size"]
         self.eraser_mode   = False
         self.color_index   = 0
         self.current_color = COLORS[0]["bgr"]
-        self.is_eraser_color = False  # Para detectar si el color negro es realmente borrador
         self.show_hud      = self.cfg["show_hud"]
         self.fullscreen    = False
 
-        # Suavizado
         self.smooth_points = deque(maxlen=self.cfg["smoothing_points"])
         self.smooth_brush  = deque(maxlen=10)
 
-        # Undo / Redo
         self.undo_stack = deque(maxlen=self.cfg["max_undo_steps"])
         self.redo_stack = deque(maxlen=self.cfg["max_undo_steps"])
         self._push_undo()
 
-        # Gesto estabilizado
         self._gesture_buffer      = deque(maxlen=self.cfg["gesture_smoothing"])
         self._last_stable_gesture = "NONE"
 
-        # Flag fill (evitar disparos multiples por frame)
         self._fill_done = False
 
-        # Hover paleta
         self._hover_color_idx = -1
         self._hover_frames    = 0
         self._hover_threshold = 18
 
-        # Hover botones
         self._hover_btn        = None
         self._hover_btn_frames = 0
         self._hover_btn_thr    = 20
 
-        # Notificaciones
         self._notif       = ""
         self._notif_timer = 0
 
-        # FPS
         self._fps_buf  = deque(maxlen=30)
         self._last_t   = time.time()
 
-        # MediaPipe
         self.mp_hands       = mp.solutions.hands
         self.hands          = self.mp_hands.Hands(
             static_image_mode=False,
@@ -496,26 +454,18 @@ class VirtualPainter:
         self.mp_draw        = mp.solutions.drawing_utils
         self.mp_draw_styles = mp.solutions.drawing_styles
 
-        # Directorios
         os.makedirs(self.cfg["images_dir"], exist_ok=True)
         os.makedirs(self.cfg["save_dir"],   exist_ok=True)
 
-        # Selector de imagenes
         self.img_selector = ImageSelector(
             self.cfg["images_dir"], self.cfg["image_extensions"])
 
         self._build_ui()
 
-    # ──────────────────────────────────────────────
-    #  NOTIFICACIONES EN PANTALLA
-    # ──────────────────────────────────────────────
     def _notify(self, msg, dur=80):
         self._notif       = msg
         self._notif_timer = dur
 
-    # ──────────────────────────────────────────────
-    #  CAPA EDITABLE SEGUN MODO
-    # ──────────────────────────────────────────────
     def _get_layer(self):
         if self.app_mode == APP_MODE_COLOR and self.color_layer is not None:
             return self.color_layer
@@ -527,9 +477,6 @@ class VirtualPainter:
         else:
             self.canvas = data
 
-    # ──────────────────────────────────────────────
-    #  UNDO / REDO
-    # ──────────────────────────────────────────────
     def _push_undo(self):
         self.undo_stack.append(self._get_layer().copy())
         self.redo_stack.clear()
@@ -547,9 +494,6 @@ class VirtualPainter:
             self._set_layer(s.copy())
             self._notify("Redo")
 
-    # ──────────────────────────────────────────────
-    #  CARGAR IMAGEN PARA COLOREAR
-    # ──────────────────────────────────────────────
     def load_color_image(self, path):
         img = cv2.imread(path)
         if img is None:
@@ -573,9 +517,6 @@ class VirtualPainter:
             self.color_layer = self.color_image_orig.copy()
             self._notify("Imagen restaurada al original")
 
-    # ──────────────────────────────────────────────
-    #  GUARDAR
-    # ──────────────────────────────────────────────
     def save_drawing(self, frame_bg=None):
         ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
         ext = self.cfg["save_format"]
@@ -593,21 +534,15 @@ class VirtualPainter:
         print(f"[guardar] {path}")
         return path
 
-    # ──────────────────────────────────────────────
-    #  CONSTRUCCION DE UI
-    # ──────────────────────────────────────────────
     def _build_ui(self):
         W, H  = self.W, self.H
         ph    = self.cfg["palette_height"]
         mg    = self.cfg["ui_margin"]
         n     = len(COLORS)
-        
-        # Paleta en la esquina inferior derecha
-        # Crear una paleta más compacta en el corner
-        self.palette_corner = False  # Desactivado: paleta oculta
+
+        self.palette_corner = False
         swatch_w = 36
         swatch_h = 32
-        # Posición: esquina inferior derecha
         pal_x = W - (n * swatch_w) - mg - 10
         pal_y = H - ph - mg - 10
 
@@ -619,7 +554,6 @@ class VirtualPainter:
             y2 = y1 + swatch_h
             self.color_rects.append((x1, y1, x2, y2))
 
-        # Botones — dos columnas a la izquierda
         bw, bh = 100, 32
         bx1    = mg + 10
         bx2    = mg + 10 + bw + 8
@@ -633,23 +567,17 @@ class VirtualPainter:
             "FILL":     (bx2, mg+36,   bx2+bw, mg+36+bh),
             "ERASER":   (bx2, mg+72,   bx2+bw, mg+72+bh),
             "OPEN_IMG": (bx2, mg+108,  bx2+bw, mg+108+bh),
-            "COLOR_PICKER": (bx1, mg+144, bx1+bw*2+8, mg+144+bh),  # Nuevo botón
+            "COLOR_PICKER": (bx1, mg+144, bx1+bw*2+8, mg+144+bh),
         }
 
-    # ──────────────────────────────────────────────
-    #  DETECCION DE DEDOS EXTENDIDOS
-    # ──────────────────────────────────────────────
     def _fingers_up(self, lm):
         h, w = self.H, self.W
         pts  = [(int(lm[i].x*w), int(lm[i].y*h)) for i in range(21)]
-        up   = [pts[TIP[0]][0] > pts[PIP[0]][0]]   # pulgar (eje X)
+        up   = [pts[TIP[0]][0] > pts[PIP[0]][0]]
         for i in range(1, 5):
             up.append(pts[TIP[i]][1] < pts[PIP[i]][1])
         return up
 
-    # ──────────────────────────────────────────────
-    #  RECONOCIMIENTO DE GESTOS
-    # ──────────────────────────────────────────────
     def _detect_gesture(self, lm):
         up     = self._fingers_up(lm)
         n_up   = sum(up)
@@ -678,9 +606,6 @@ class VirtualPainter:
                 self._gesture_buffer).most_common(1)[0][0]
         return self._last_stable_gesture
 
-    # ──────────────────────────────────────────────
-    #  SUAVIZADO
-    # ──────────────────────────────────────────────
     def _smooth_pt(self, pt):
         self.smooth_points.append(pt)
         return (int(np.mean([p[0] for p in self.smooth_points])),
@@ -690,9 +615,6 @@ class VirtualPainter:
         self.smooth_brush.append(s)
         return int(np.mean(self.smooth_brush))
 
-    # ──────────────────────────────────────────────
-    #  PINCELADA EN CANVAS
-    # ──────────────────────────────────────────────
     def _stroke(self, pt, color, size):
         layer = self._get_layer()
         if self.prev_point:
@@ -700,9 +622,6 @@ class VirtualPainter:
         cv2.circle(layer, pt, size//2, color, -1, cv2.LINE_AA)
         self._set_layer(layer)
 
-    # ──────────────────────────────────────────────
-    #  FLOOD FILL (accion unica por gesto)
-    # ──────────────────────────────────────────────
     def _apply_fill(self, pt):
         self._push_undo()
         result = flood_fill_smooth(
@@ -710,15 +629,9 @@ class VirtualPainter:
         self._set_layer(result)
         self._notify(f"Relleno aplicado (tol={self.fill_tolerance})")
 
-    # ──────────────────────────────────────────────
-    #  HOVER PALETA DE COLORES (esquina inferior derecha)
-    # ──────────────────────────────────────────────
     def _check_color_hover(self, pt):
         x, y = pt
-        # La paleta ahora está en la esquina inferior derecha
-        # Verificar si el punto está cerca de la paleta
         if hasattr(self, 'palette_corner') and self.palette_corner:
-            # Buscar en todos los rectángulos de color
             for i, (x1, y1, x2, y2) in enumerate(self.color_rects):
                 if x1 <= x <= x2 and y1 <= y <= y2:
                     if self._hover_color_idx == i:
@@ -726,7 +639,6 @@ class VirtualPainter:
                         if self._hover_frames >= self._hover_threshold:
                             self.color_index   = i
                             self.current_color = COLORS[i]["bgr"]
-                            # El color negro ya no activa el borrador automáticamente
                             self.eraser_mode   = False
                             self.active_tool   = TOOL_BRUSH
                             self._hover_frames = 0
@@ -739,9 +651,6 @@ class VirtualPainter:
         self._hover_frames    = 0
         return False
 
-    # ──────────────────────────────────────────────
-    #  HOVER BOTONES
-    # ──────────────────────────────────────────────
     def _check_btn_hover(self, pt, frame_bg=None):
         x, y = pt
         for name, (x1, y1, x2, y2) in self.buttons.items():
@@ -792,12 +701,10 @@ class VirtualPainter:
             self.load_color_image(path)
 
     def _open_color_picker(self):
-        """Abre el selector de colores extendido."""
         picker = ColorPicker()
         result = picker.show(self.W, self.H)
         if result:
             self.current_color = result["bgr"]
-            # Buscar si el color está en la paleta original
             found = False
             for i, c in enumerate(COLORS):
                 if c["bgr"] == result["bgr"]:
@@ -805,17 +712,12 @@ class VirtualPainter:
                     found = True
                     break
             if not found:
-                # Agregar como color temporal (no en paleta)
                 self.color_index = -1
             self.eraser_mode = False
             self.active_tool = TOOL_BRUSH
             self._notify(f"Color: {result['name']}")
 
-    # ──────────────────────────────────────────────
-    #  COMPOSICION DEL FRAME
-    # ──────────────────────────────────────────────
     def _merge_canvas(self, frame):
-        """Superpone el canvas de pintura libre sobre la camara."""
         op    = self.cfg["canvas_opacity"]
         mask  = (self.canvas.sum(axis=2) > 0).astype(np.uint8)
         mask3 = np.stack([mask]*3, axis=-1)
@@ -824,9 +726,6 @@ class VirtualPainter:
                          frame)
         return blend.astype(np.uint8)
 
-    # ──────────────────────────────────────────────
-    #  RENDERIZADO DEL HUD
-    # ──────────────────────────────────────────────
     def _draw_ui(self, frame, gesture, fps):
         if not self.show_hud:
             return frame
@@ -834,19 +733,14 @@ class VirtualPainter:
         W, H  = self.W, self.H
         ph    = self.cfg["palette_height"]
         mg    = self.cfg["ui_margin"]
-        alpha = self.cfg["hud_alpha"]
 
-        # No dibujar fondo de barra superior (paleta ahora está en corner)
-        # ── Swatches de color en esquina inferior derecha
         if self.palette_corner:
             for i, (c, (x1, y1, x2, y2)) in enumerate(zip(COLORS, self.color_rects)):
                 bgr = c["bgr"]
                 sel = (i == self.color_index) and not self.eraser_mode
                 hov = (i == self._hover_color_idx)
 
-                # Borde oscuro
                 cv2.rectangle(frame, (x1+2, y1+2), (x2+2, y2+2), (0,0,0), -1)
-                # Color
                 cv2.rectangle(frame, (x1, y1), (x2, y2), bgr, -1)
 
                 bc = (255,255,255) if sel else (60,60,70)
@@ -861,7 +755,6 @@ class VirtualPainter:
                     prog = int((x2-x1)*self._hover_frames/self._hover_threshold)
                     cv2.rectangle(frame, (x1, y2-4), (x1+prog, y2), (80,220,130), -1)
 
-        # ── Botones (esquina superior izquierda)
         BTN_TEXT = {
             "UNDO":    "DESHACER",     "REDO":    "REHACER",
             "CLEAR":   "LIMPIAR",      "SAVE":    "GUARDAR",
@@ -893,7 +786,6 @@ class VirtualPainter:
                 prog = int((x2-x1)*self._hover_btn_frames/self._hover_btn_thr)
                 cv2.rectangle(frame, (x1, y2-4), (x1+prog, y2), (80,220,80), -1)
 
-        # ── Panel info (inferior izquierdo)
         ix, iy   = 12, H - 195
         panel_w  = 340
         ov2 = frame.copy()
@@ -903,8 +795,6 @@ class VirtualPainter:
         def T(s, yo, col=(200,200,200), sc=0.50, th=1):
             cv2.putText(frame, s, (ix, iy+yo),
                         cv2.FONT_HERSHEY_SIMPLEX, sc, col, th, cv2.LINE_AA)
-
-        # Color actual solo en notificación (sin rectángulo de muestra)
 
         mode_lbl = "PINTURA LIBRE" if self.app_mode == APP_MODE_PAINT else "COLOREAR IMAGEN"
         tool_lbl = {"BRUSH":"Pincel","FILL":"Relleno","ERASER":"Borrador"}[self.active_tool]
@@ -922,18 +812,12 @@ class VirtualPainter:
         T(f"Undo: {len(self.undo_stack)-1}   Redo: {len(self.redo_stack)}", 153)
         T(f"FPS:  {fps:.1f}", 175, (80,220,80))
 
-        # Preview de herramienta eliminado
-
-        # Panel de gestos eliminado por solicitud del usuario
-
-        # ── Indicador de modo (centro superior)
         mode_col  = (80,200,255) if self.app_mode == APP_MODE_COLOR else (80,255,140)
         mode_str  = "MODO: COLOREAR IMAGEN" if self.app_mode == APP_MODE_COLOR \
                     else "MODO: PINTURA LIBRE"
         cv2.putText(frame, mode_str, (W//2-130, ph+mg*2-4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.62, mode_col, 2, cv2.LINE_AA)
 
-        # ── Barra de tolerancia (visible solo en modo Fill)
         if self.active_tool == TOOL_FILL:
             tx    = W//2 + 150
             ty    = ph//2 + mg
@@ -948,7 +832,6 @@ class VirtualPainter:
             cv2.putText(frame, f"Tolerancia relleno: {self.fill_tolerance}",
                         (tx, ty-6), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200,180,80), 1, cv2.LINE_AA)
 
-        # ── Notificacion flotante
         if self._notif_timer > 0:
             self._notif_timer -= 1
             a = min(1.0, self._notif_timer / 20)
@@ -961,9 +844,6 @@ class VirtualPainter:
 
         return frame
 
-    # ──────────────────────────────────────────────
-    #  CURSOR VIRTUAL
-    # ──────────────────────────────────────────────
     def _draw_cursor(self, frame, pt, gesture):
         col = self.current_color if not self.eraser_mode else (200,200,200)
         r   = self.brush_size + 4
@@ -988,7 +868,10 @@ class VirtualPainter:
             cv2.circle(frame, pt, 10, (140,140,140), 1, cv2.LINE_AA)
 
     # ──────────────────────────────────────────────
-    #  BUCLE PRINCIPAL
+    #  BUCLE PRINCIPAL — CORREGIDO
+    #  Los landmarks ahora se dibujan DESPUÉS de
+    #  componer el frame final (output), así aparecen
+    #  visibles sobre la imagen de colorear.
     # ──────────────────────────────────────────────
     def run(self):
         cap = cv2.VideoCapture(self.cfg["camera_index"])
@@ -1007,8 +890,12 @@ class VirtualPainter:
 
         _print_banner()
 
-        last_bg = None
-        gesture = "NONE"
+        last_bg  = None
+        gesture  = "NONE"
+
+        # Variables para guardar landmarks del frame actual
+        _hand_lm_to_draw = None
+        _smooth_to_draw  = None
 
         while True:
             ret, frame = cap.read()
@@ -1036,30 +923,33 @@ class VirtualPainter:
             res = self.hands.process(rgb)
             rgb.flags.writeable = True
 
+            # Resetear landmarks para este frame
+            _hand_lm_to_draw = None
+            _smooth_to_draw  = None
+
             if res.multi_hand_landmarks:
                 for hand_lm in res.multi_hand_landmarks:
                     lm = hand_lm.landmark
 
-                    # Posicion punta del indice
                     ix = int(lm[8].x * self.W)
                     iy = int(lm[8].y * self.H)
 
-                    # Distancia pinch
                     tx = int(lm[4].x * self.W)
                     ty = int(lm[4].y * self.H)
                     pinch = math.dist((tx,ty), (ix,iy))
 
-                    # Actualizar grosor con pinch
                     mn, mx = self.cfg["min_brush_size"], self.cfg["max_brush_size"]
                     np_val = float(np.clip((pinch-20)/200, 0, 1))
                     self.brush_size = self._smooth_bs(int(mn + np_val*(mx-mn)))
 
-                    # Gesto estabilizado
                     raw_g   = self._detect_gesture(lm)
                     gesture = self._stable_gesture(raw_g)
                     smooth  = self._smooth_pt((ix, iy))
 
-                    # Gestos globales de control
+                    # Guardamos para dibujar DESPUÉS de componer
+                    _hand_lm_to_draw = hand_lm
+                    _smooth_to_draw  = smooth
+
                     if gesture == "THUMB_UP":
                         self.color_index   = (self.color_index + 1) % len(COLORS)
                         self.current_color = COLORS[self.color_index]["bgr"]
@@ -1082,7 +972,6 @@ class VirtualPainter:
                         self.drawing    = False
                         self.prev_point = None
 
-                    # SELECT / PINCH → interaccion con UI
                     if gesture in ("SELECT", "OPEN", "PINCH"):
                         self._check_color_hover(smooth)
                         self._check_btn_hover(smooth, last_bg)
@@ -1090,29 +979,24 @@ class VirtualPainter:
                         self.prev_point = None
                         self._fill_done = False
 
-                    # DRAW → herramienta activa
                     elif gesture == "DRAW":
                         self._check_color_hover(smooth)
                         self._hover_btn        = None
                         self._hover_btn_frames = 0
 
-                        # Verificar si está en zona de botones (esquina superior izquierda)
                         in_btn_area = False
                         for name, (x1, y1, x2, y2) in self.buttons.items():
                             if x1 <= smooth[0] <= x2 and y1 <= smooth[1] <= y2:
                                 in_btn_area = True
                                 break
-                        
-                        # Verificar si está en zona de paleta (esquina inferior derecha)
+
                         in_pal_area = False
                         for x1, y1, x2, y2 in self.color_rects:
                             if x1 <= smooth[0] <= x2 and y1 <= smooth[1] <= y2:
                                 in_pal_area = True
                                 break
 
-                        # Permitir dibujar en toda la pantalla excepto zonas de UI
                         if not in_btn_area and not in_pal_area:
-                            # ── Herramienta: RELLENO
                             if self.active_tool == TOOL_FILL:
                                 if not self._fill_done:
                                     self._apply_fill(smooth)
@@ -1120,7 +1004,6 @@ class VirtualPainter:
                                 self.drawing    = False
                                 self.prev_point = None
 
-                            # ── Herramienta: BORRADOR
                             elif self.active_tool == TOOL_ERASER or self.eraser_mode:
                                 if not self.drawing:
                                     self._push_undo()
@@ -1129,7 +1012,6 @@ class VirtualPainter:
 
                                 if self.app_mode == APP_MODE_COLOR \
                                         and self.color_image_orig is not None:
-                                    # Restaurar pixels originales bajo el borrador
                                     mask_e = np.zeros((self.H, self.W), dtype=np.uint8)
                                     cv2.circle(mask_e, smooth, esize, 255, -1)
                                     mask3 = np.stack([mask_e]*3, axis=-1)
@@ -1142,7 +1024,6 @@ class VirtualPainter:
                                     self._stroke(smooth, (0,0,0), esize)
                                 self.prev_point = smooth
 
-                            # ── Herramienta: PINCEL
                             else:
                                 if not self.drawing:
                                     self._push_undo()
@@ -1151,7 +1032,6 @@ class VirtualPainter:
                                 self.prev_point = smooth
 
                         else:
-                            # En zona de paleta
                             self.drawing    = False
                             self.prev_point = None
                             self._fill_done = False
@@ -1160,32 +1040,6 @@ class VirtualPainter:
                         self.drawing    = False
                         self.prev_point = None
                         self._fill_done = False
-
-                    # Landmarks y cursor - mejorados para mayor visibilidad
-                    # Estilo personalizado más visible para los gestos
-                    hand_style = self.mp_draw_styles.DrawingSpec(
-                        color=(0, 255, 127),  # Verde brillante
-                        thickness=3,          # Más grueso
-                        circle_radius=6       # Puntos más grandes
-                    )
-                    conn_style = self.mp_draw_styles.DrawingSpec(
-                        color=(0, 200, 255),  # Cyan brillante
-                        thickness=2           # Conexiones más visibles
-                    )
-                    self.mp_draw.draw_landmarks(
-                        frame, hand_lm,
-                        self.mp_hands.HAND_CONNECTIONS,
-                        hand_style,
-                        conn_style,
-                    )
-                    
-                    # Resaltar punto índice (donde se dibuja)
-                    idx_x = int(lm[8].x * self.W)
-                    idx_y = int(lm[8].y * self.H)
-                    cv2.circle(frame, (idx_x, idx_y), 12, (255, 255, 0), 2, cv2.LINE_AA)
-                    cv2.circle(frame, (idx_x, idx_y), 5, (0, 255, 255), -1, cv2.LINE_AA)
-                    
-                    self._draw_cursor(frame, smooth, gesture)
 
             else:
                 self.drawing    = False
@@ -1197,10 +1051,38 @@ class VirtualPainter:
 
             # ── Composicion del frame final
             if self.app_mode == APP_MODE_COLOR and self.color_layer is not None:
-                # Imagen coloreada como fondo + camara muy tenue
+                # Imagen de colorear como fondo principal, camara muy tenue
                 output = cv2.addWeighted(self.color_layer, 0.88, frame, 0.12, 0)
             else:
                 output = self._merge_canvas(frame)
+
+            # ── AHORA dibujamos los landmarks y cursor SOBRE el output ya compuesto
+            # ── Así se ven claramente encima de la imagen de colorear
+            if _hand_lm_to_draw is not None and _smooth_to_draw is not None:
+                hand_style = self.mp_draw_styles.DrawingSpec(
+                    color=(0, 255, 127),   # Verde brillante
+                    thickness=3,
+                    circle_radius=6
+                )
+                conn_style = self.mp_draw_styles.DrawingSpec(
+                    color=(0, 200, 255),   # Cyan brillante
+                    thickness=2
+                )
+                self.mp_draw.draw_landmarks(
+                    output,                         # <-- sobre output, no sobre frame
+                    _hand_lm_to_draw,
+                    self.mp_hands.HAND_CONNECTIONS,
+                    hand_style,
+                    conn_style,
+                )
+
+                # Resaltar punto índice
+                idx_x = int(_hand_lm_to_draw.landmark[8].x * self.W)
+                idx_y = int(_hand_lm_to_draw.landmark[8].y * self.H)
+                cv2.circle(output, (idx_x, idx_y), 12, (255, 255, 0), 2, cv2.LINE_AA)
+                cv2.circle(output, (idx_x, idx_y), 5,  (0, 255, 255), -1, cv2.LINE_AA)
+
+                self._draw_cursor(output, _smooth_to_draw, gesture)
 
             output = self._draw_ui(output, gesture, fps)
             cv2.imshow(win, output)
@@ -1275,10 +1157,6 @@ class VirtualPainter:
 #  GENERADOR DE IMAGENES DE EJEMPLO
 # ══════════════════════════════════════════════════════
 def create_sample_images(out_dir):
-    """
-    Genera 3 imagenes de colorear de ejemplo (lineas negras sobre blanco).
-    Se ejecuta automaticamente si la carpeta de imagenes esta vacia.
-    """
     os.makedirs(out_dir, exist_ok=True)
     W, H = 800, 600
 
@@ -1301,8 +1179,8 @@ def create_sample_images(out_dir):
 
     # 2 — Paisaje
     img = np.full((H, W, 3), 255, dtype=np.uint8)
-    cv2.line(img, (0, H//2), (W, H//2), (0,0,0), 2)           # horizonte
-    cv2.circle(img, (130, 110), 72, (0,0,0), 2)               # sol
+    cv2.line(img, (0, H//2), (W, H//2), (0,0,0), 2)
+    cv2.circle(img, (130, 110), 72, (0,0,0), 2)
     for a in range(0, 360, 40):
         rd = math.radians(a)
         cv2.line(img,
@@ -1311,7 +1189,7 @@ def create_sample_images(out_dir):
                  (0,0,0), 2)
     mountains = np.array([[0,H//2],[160,185],[320,H//2],[510,170],[720,H//2],[W,H//2]])
     cv2.polylines(img, [mountains], False, (0,0,0), 3)
-    cv2.rectangle(img, (620,400), (650,H//2), (0,0,0), 2)     # tronco arbol
+    cv2.rectangle(img, (620,400), (650,H//2), (0,0,0), 2)
     cv2.ellipse(img, (635,370), (62,82), 0, 0, 360, (0,0,0), 2)
     for cx2, cy2 in [(250,75),(460,55),(660,85)]:
         for ox, oy in [(0,0),(32,-10),(-32,-10),(52,5),(-52,5)]:
@@ -1320,19 +1198,19 @@ def create_sample_images(out_dir):
 
     # 3 — Gato
     img = np.full((H, W, 3), 255, dtype=np.uint8)
-    cv2.circle(img, (400,300), 185, (0,0,0), 3)               # cabeza
+    cv2.circle(img, (400,300), 185, (0,0,0), 3)
     for pts in [np.array([[255,160],[295,55],[360,155]]),
                 np.array([[440,155],[505,55],[545,160]])]:
-        cv2.polylines(img, [pts], True, (0,0,0), 3)           # orejas
+        cv2.polylines(img, [pts], True, (0,0,0), 3)
     for ex in [340, 460]:
         cv2.circle(img, (ex,268), 38, (0,0,0), 3)
-        cv2.circle(img, (ex,268), 14, (0,0,0), -1)            # ojos
+        cv2.circle(img, (ex,268), 14, (0,0,0), -1)
     cv2.fillPoly(img, [np.array([[382,338],[400,360],[418,338]])], (0,0,0))
     cv2.ellipse(img, (368,374), (26,16), 0, 0, 180, (0,0,0), 2)
     cv2.ellipse(img, (432,374), (26,16), 0, 0, 180, (0,0,0), 2)
     for y in [338,358,378]:
         cv2.line(img, (200, y), (362, y+10), (0,0,0), 2)
-        cv2.line(img, (600, y), (438, y+10), (0,0,0), 2)      # bigotes
+        cv2.line(img, (600, y), (438, y+10), (0,0,0), 2)
     cv2.imwrite(os.path.join(out_dir, "gato.png"), img)
 
     print(f"[OK] Imagenes de ejemplo generadas en '{out_dir}/'")
@@ -1360,16 +1238,13 @@ def _print_banner():
 #  PUNTO DE ENTRADA
 # ══════════════════════════════════════════════════════
 def main():
-    # Argumento: indice de camara
     if len(sys.argv) > 1 and sys.argv[1].lstrip('-').isdigit():
         CONFIG["camera_index"] = int(sys.argv[1])
 
-    # Argumento especial: generar imagenes de ejemplo y salir
     if "--gen-samples" in sys.argv:
         create_sample_images(CONFIG["images_dir"])
         return
 
-    # Si no hay imagenes en la carpeta, generar samples automaticamente
     total = sum(
         len(glob.glob(os.path.join(CONFIG["images_dir"], ext)))
         for ext in CONFIG["image_extensions"]
