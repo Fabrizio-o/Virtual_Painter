@@ -1566,7 +1566,7 @@ def _print_banner():
 # ══════════════════════════════════════════════════════
 #  PUNTO DE ENTRADA
 # ══════════════════════════════════════════════════════
-def main():
+def main():   
     if len(sys.argv) > 1 and sys.argv[1].lstrip('-').isdigit():
         CONFIG["camera_index"] = int(sys.argv[1])
 
