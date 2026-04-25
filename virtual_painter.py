@@ -1,25 +1,13 @@
 """
 ╔══════════════════════════════════════════════════════════════════════╗
-║      MAGIC PAINT  — Pintura Virtual con Gestos de Mano  v4.2        ║
+║      MAGIC PAINT  — Pintura Virtual con Gestos de Mano  v5.0        ║
 ║           Python + OpenCV + MediaPipe  |  Edicion Feria             ║
 ║                    [VERSION NIÑOS - TEMA ALEGRE]                    ║
 ╠══════════════════════════════════════════════════════════════════════╣
-║  TEMA VISUAL:                                                        ║
-║   • Colores cálidos y alegres para niños de escuela                 ║
-║   • Nubes animadas con carita feliz                                 ║
-║   • Letras MAGIC PAINT animadas letra a letra                       ║
-║   • Fondo degradado cielo azul → crema                             ║
-║   • Manchas de pintura animadas en borde inferior                   ║
-╠══════════════════════════════════════════════════════════════════════╣
-║  OPTIMIZACIONES:                                                     ║
-║   • Reducción de operaciones redundantes por frame                  ║
-║   • Cache de elementos estáticos de UI                              ║
-║   • Optimización de flood fill y strokes                            ║
-║   • Frame skipping para detección de manos                          ║
-╠══════════════════════════════════════════════════════════════════════╣
-║  CORREGIDO:                                                          ║
-║   • Gestos desaparecen al quitar la mano                            ║
-║   • Efectos visuales de botones restaurados                         ║
+║  CAMBIOS v5.0:                                                       ║
+║   • Botones con colores más saturados y visibles                    ║
+║   • Optimización de lag en modo libre (skip frames, menos blends)   ║
+║   • Botón IMPRIMIR con encabezado UPEC + logo institucional         ║
 ╚══════════════════════════════════════════════════════════════════════╝
 """
 
@@ -56,16 +44,19 @@ UI = {
     "text_blanco":   (50,   40,  30),
     "text_claro":    (100,  80,  60),
     "text_oscuro":   (240, 230, 220),
-    "tool_brush":    (80,  222, 100),
-    "tool_fill":     (60,  159, 255),
-    "tool_eraser":   (245, 110, 197),
-    "tool_color":    (245, 110, 197),
-    "tool_undo":     (80,  202, 254),
-    "tool_redo":     (80,  202, 254),
-    "tool_clear":    (80,  107, 255),
-    "tool_save":     (80,  222, 100),
-    "tool_open":     (245, 110, 197),
-    "tool_free":     (251, 219,  72),
+    # ── Botones IZQUIERDOS — colores saturados y contrastantes ──────
+    "tool_brush":    (0,   180,  0),     # Verde puro intenso
+    "tool_fill":     (0,   120, 255),    # Azul vivo
+    "tool_eraser":   (0,    50, 220),    # Rojo intenso
+    "tool_color":    (180,   0, 180),    # Morado saturado
+    # ── Botones DERECHOS ────────────────────────────────────────────
+    "tool_undo":     (200, 130,   0),    # Naranja oscuro
+    "tool_redo":     (200, 130,   0),    # Naranja oscuro
+    "tool_clear":    (0,     0, 200),    # Rojo fuerte
+    "tool_save":     (0,   160,   0),    # Verde oscuro
+    "tool_open":     (180,   0, 140),    # Magenta oscuro
+    "tool_free":     (0,   160, 160),    # Cyan oscuro
+    "tool_print":    (100,  60,   0),    # Café/marrón oscuro — NUEVO
     "mode_paint":    (80,  222, 100),
     "mode_color":    (60,  159, 255),
     "mode_free":     (251, 219,  72),
@@ -107,10 +98,14 @@ CONFIG = {
     "right_click_cooldown": 22,
     "double_click_cooldown": 25,
     "mouse_zone_margin": 0.08,
+    # ── OPTIMIZACIÓN: skip más agresivo en modo libre ─────────────
     "skip_frames_detection": 1,
+    "skip_frames_free_mode": 2,      # NUEVO: salta más frames en modo libre
     "particle_count": 20,
     "max_paint_splashes": 15,
     "ui_update_every": 2,
+    # Ruta del logo institucional (relativa al script)
+    "upec_logo_path": os.path.join(os.path.dirname(os.path.abspath(__file__)), "upec_logo.png"),
 }
 
 # =============================================================
@@ -144,7 +139,6 @@ TOOL_ERASER = "ERASER"
 TIP = [4, 8, 12, 16, 20]
 PIP = [3, 6, 10, 14, 18]
 
-# Letras del título con sus colores
 MAGIC_LETTERS = [
     ("M", (80,  107, 255)),
     ("A", (60,  159, 255)),
@@ -164,7 +158,6 @@ PAINT_LETTERS = [
 #  NUBES ANIMADAS
 # =============================================================
 def draw_clouds(frame, t):
-    """Dibuja nubes animadas con carita feliz en el fondo."""
     H, W = frame.shape[:2]
     clouds = [
         {"base_x": 120,  "y": 55,  "speed": 0.30, "scale": 1.00, "alpha": 0.55},
@@ -180,21 +173,14 @@ def draw_clouds(frame, t):
         cy = int(c["y"])
         s  = c["scale"]
         col = (255, 255, 255)
-        # cuerpo principal
         cv2.ellipse(overlay, (int(cx),       int(cy+30*s)), (int(80*s), int(30*s)), 0, 0, 360, col, -1)
-        # lóbulo izquierdo
         cv2.ellipse(overlay, (int(cx-45*s),  int(cy+18*s)), (int(42*s), int(32*s)), 0, 0, 360, col, -1)
-        # lóbulo derecho
         cv2.ellipse(overlay, (int(cx+45*s),  int(cy+14*s)), (int(46*s), int(36*s)), 0, 0, 360, col, -1)
-        # lóbulo central alto
         cv2.ellipse(overlay, (int(cx+5*s),   int(cy)),      (int(38*s), int(32*s)), 0, 0, 360, col, -1)
-        # ojos
         cv2.circle(overlay, (int(cx-12*s), int(cy+10*s)), max(1, int(4*s)), (135, 180, 210), -1)
         cv2.circle(overlay, (int(cx+14*s), int(cy+10*s)), max(1, int(4*s)), (135, 180, 210), -1)
-        # brillo en ojos
         cv2.circle(overlay, (int(cx-10*s), int(cy+8*s)),  max(1, int(2*s)), (255, 255, 255), -1)
         cv2.circle(overlay, (int(cx+16*s), int(cy+8*s)),  max(1, int(2*s)), (255, 255, 255), -1)
-        # sonrisa
         cv2.ellipse(overlay, (int(cx+1*s), int(cy+18*s)),
                     (int(10*s), int(6*s)), 0, 0, 180, (135, 180, 210), max(1, int(2*s)))
     cv2.addWeighted(overlay, 0.60, frame, 0.40, 0, frame)
@@ -204,13 +190,11 @@ def draw_clouds(frame, t):
 #  TÍTULO ANIMADO LETRA A LETRA
 # =============================================================
 def draw_animated_title(frame, cx, start_y, t):
-    """Dibuja MAGIC y PAINT con letras pulsantes, sombra y rebote."""
     font  = cv2.FONT_HERSHEY_SIMPLEX
     scale = 0.82
     thick = 2
     lw    = 23
     gap   = 3
-
     for letters, y in [(MAGIC_LETTERS, start_y), (PAINT_LETTERS, start_y + 38)]:
         total_w = len(letters) * (lw + gap)
         x = cx - total_w // 2
@@ -218,10 +202,8 @@ def draw_animated_title(frame, cx, start_y, t):
             phase   = math.sin(t * 2.8 + i * 0.75)
             dy      = int(phase * 5)
             scale_f = scale + 0.07 * abs(phase)
-            # sombra suave
             cv2.putText(frame, ch, (x+2, y+dy+2), font,
                         scale_f, (200, 175, 140), thick+1, cv2.LINE_AA)
-            # letra principal
             cv2.putText(frame, ch, (x, y+dy), font,
                         scale_f, col, thick, cv2.LINE_AA)
             x += lw + gap
@@ -494,21 +476,18 @@ class ColorPicker:
         canvas = np.full((H, W, 3), self.BG_COLOR, dtype=np.uint8)
         mg = 20
         n  = len(self.colors)
-
         cv2.rectangle(canvas, (0, 0), (W, 70), (255, 240, 210), -1)
         cv2.putText(canvas, "SELECCIONA UN COLOR", (mg, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (60, 120, 255), 2, cv2.LINE_AA)
         cv2.putText(canvas,
                     "Flechas/WASD para navegar  |  ENTER para seleccionar  |  ESC para cancelar",
                     (mg, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (120, 90, 60), 1, cv2.LINE_AA)
-
         start_y = 90
         for i, c in enumerate(self.colors):
             row = i // self.COLS
             col = i % self.COLS
             x   = mg + col * (self.SWATCH_W + 12)
             y   = start_y + row * (self.SWATCH_H + 30)
-
             if i == self.selected:
                 for ex in [4, 3, 2]:
                     alpha = 0.1 * (4 - ex)
@@ -524,15 +503,12 @@ class ColorPicker:
                 cv2.rectangle(canvas, (x-2, y-2),
                               (x+self.SWATCH_W+2, y+self.SWATCH_H+2),
                               (200, 180, 150), 1)
-
             cv2.rectangle(canvas, (x, y), (x+self.SWATCH_W, y+self.SWATCH_H), c["bgr"], -1)
             cv2.rectangle(canvas, (x, y), (x+self.SWATCH_W, y+self.SWATCH_H), (180, 160, 130), 1)
-
             name = c["name"][:12]
             (tw, th), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
             cv2.putText(canvas, name, (x + (self.SWATCH_W - tw)//2, y+self.SWATCH_H+18),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 60, 40), 1, cv2.LINE_AA)
-
         cv2.rectangle(canvas, (0, H-35), (W, H), (255, 240, 210), -1)
         cv2.putText(canvas, f"{n} colores disponibles", (mg, H-12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (120, 90, 60), 1, cv2.LINE_AA)
@@ -589,7 +565,6 @@ class ImageSelector:
             self.thumbnails.append(th)
 
     def _build_grid(self, W, H):
-        # Fondo degradado cálido
         bg = np.zeros((H, W, 3), dtype=np.uint8)
         for y in range(H):
             t = y / H
@@ -597,18 +572,14 @@ class ImageSelector:
             g = int(210*(1-t) + 245*t)
             r = int(135*(1-t) + 255*t)
             bg[y, :] = (b, g, r)
-
         draw_clouds(bg, time.time())
-
         cv2.rectangle(bg, (0, 0), (W, 85), (255, 249, 230), -1)
         draw_gradient_bar(bg, 0, 82, W, 85, UI["vivo_cyan"], UI["vivo_rosa"])
-
         put_text_centered(bg, "SELECCIONA UNA IMAGEN PARA COLOREAR",
                           W//2, 32, 0.9, (60, 120, 255), 2)
         put_text_centered(bg,
             "Flechas/WASD para navegar  |  ENTER para seleccionar  |  ESC para cancelar",
             W//2, 62, 0.48, (100, 80, 60), 1)
-
         mg, pad = 20, 14
         for i, (thumb, path) in enumerate(zip(self.thumbnails, self.image_paths)):
             row = i // self.COLS
@@ -616,28 +587,19 @@ class ImageSelector:
             x   = mg + col * (self.THUMB_W + pad)
             y   = 98  + row * (self.THUMB_H + pad + 26)
             if y + self.THUMB_H + 26 > H - 40: break
-
             tw, th = self.THUMB_W, self.THUMB_H
-
             if i == self.selected:
-                draw_rounded_rect(bg, x-6, y-6, x+tw+6, y+th+6, 6,
-                                  UI["vivo_verde"], -1)
-                draw_rounded_rect(bg, x-6, y-6, x+tw+6, y+th+6, 6,
-                                  (235, 248, 255), -1)
-                draw_neon_border(bg, x-4, y-4, x+tw+4, y+th+4,
-                                 UI["vivo_verde"], 3)
+                draw_rounded_rect(bg, x-6, y-6, x+tw+6, y+th+6, 6, UI["vivo_verde"], -1)
+                draw_rounded_rect(bg, x-6, y-6, x+tw+6, y+th+6, 6, (235, 248, 255), -1)
+                draw_neon_border(bg, x-4, y-4, x+tw+4, y+th+4, UI["vivo_verde"], 3)
             else:
-                cv2.rectangle(bg, (x-2, y-2), (x+tw+2, y+th+2),
-                              UI["border_claro"], 1)
-
+                cv2.rectangle(bg, (x-2, y-2), (x+tw+2, y+th+2), UI["border_claro"], 1)
             bg[y:y+th, x:x+tw] = thumb
-
             fname = os.path.basename(path)
             fname = fname[:24] if len(fname) > 24 else fname
             col_t = UI["vivo_verde"] if i == self.selected else UI["text_claro"]
             cv2.putText(bg, fname, (x, y+th+20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, col_t, 1, cv2.LINE_AA)
-
         cv2.rectangle(bg, (0, H-38), (W, H), (255, 249, 230), -1)
         put_text_centered(
             bg, f"[R] Recargar  |  {len(self.image_paths)} imagen(es) disponibles",
@@ -747,8 +709,6 @@ class VirtualPainter:
 
         self._particles = [self.Particle(self.W, self.H) for _ in range(self.cfg["particle_count"])]
 
-        self._title_pulse = 0.0
-
         self._fps_buf = deque(maxlen=30)
         self._last_t  = time.time()
 
@@ -757,9 +717,22 @@ class VirtualPainter:
         self._last_gesture = "NONE"
         self._hand_present = False
 
+        # ── OPTIMIZACIÓN: cachés para modo libre ─────────────────────
+        self._free_bg_cache     = None   # fondo pre-renderizado en modo libre
+        self._free_bg_frame_cnt = -1     # frame en que se actualizó el caché
+        self._free_bg_interval  = 3      # re-render del fondo cada N frames
+
         self.mouse_ctrl        = MouseController(self.cfg, self.W, self.H)
         self._mouse_action     = ""
         self._mouse_action_t   = 0
+
+        # Cargar logo UPEC una sola vez
+        self._upec_logo = None
+        logo_path = self.cfg.get("upec_logo_path", "")
+        if os.path.isfile(logo_path):
+            logo_raw = cv2.imread(logo_path, cv2.IMREAD_UNCHANGED)
+            if logo_raw is not None:
+                self._upec_logo = logo_raw
 
         self.mp_hands       = mp.solutions.hands
         self.hands          = self.mp_hands.Hands(
@@ -822,17 +795,13 @@ class VirtualPainter:
         if img is None:
             self._notify(f"Error abriendo imagen", UI["vivo_rojo"])
             return False
-
         draw_start_x = self.SIDEBAR_W
         draw_end_x   = self.W - self.SIDEBAR_W
         draw_width   = draw_end_x - draw_start_x
         draw_height  = self.H
-
         img_resized = cv2.resize(img, (draw_width, draw_height), interpolation=cv2.INTER_AREA)
-
         full_canvas = np.zeros((self.H, self.W, 3), dtype=np.uint8)
         full_canvas[:, draw_start_x:draw_end_x] = img_resized
-
         self.color_image_orig = full_canvas.copy()
         self.color_layer      = full_canvas.copy()
         self.color_image_path = path
@@ -873,9 +842,144 @@ class VirtualPainter:
         print(f"[OK] {path}")
         return path
 
+    # ── NUEVO: IMPRIMIR con encabezado UPEC ──────────────────────────
+    def print_drawing(self, frame_bg=None):
+        """
+        Genera una imagen de impresión con:
+          - Encabezado blanco con logo UPEC + título institucional
+          - El dibujo/canvas debajo
+        Guarda el archivo y lo muestra en pantalla para imprimir con Ctrl+P del SO.
+        """
+        # 1. Obtener la imagen base que se imprimirá
+        if self.app_mode == APP_MODE_COLOR and self.color_layer is not None:
+            draw_start_x = self.SIDEBAR_W
+            draw_end_x   = self.W - self.SIDEBAR_W
+            art = self.color_layer[:, draw_start_x:draw_end_x].copy()
+        elif frame_bg is not None:
+            merged = self._merge_canvas(frame_bg)
+            art = merged[:, self.SIDEBAR_W:self.W - self.SIDEBAR_W].copy()
+        else:
+            art = self.canvas.copy()
+
+        # 2. Dimensiones de impresión (A4 aprox a 150 dpi: 1240 x 1754)
+        PRINT_W = 1240
+        ART_H   = 900
+
+        # Escalar arte al ancho de impresión
+        art_h_orig, art_w_orig = art.shape[:2]
+        scale_factor = PRINT_W / art_w_orig
+        new_art_h = int(art_h_orig * scale_factor)
+        art_resized = cv2.resize(art, (PRINT_W, new_art_h), interpolation=cv2.INTER_LANCZOS4)
+        # Recortar o rellenar a ART_H
+        if new_art_h > ART_H:
+            art_resized = art_resized[:ART_H, :]
+        elif new_art_h < ART_H:
+            pad = np.full((ART_H - new_art_h, PRINT_W, 3), 255, dtype=np.uint8)
+            art_resized = np.vstack([art_resized, pad])
+
+        # 3. Construir encabezado blanco
+        HEADER_H = 160
+        header = np.full((HEADER_H, PRINT_W, 3), 255, dtype=np.uint8)
+
+        # Línea superior verde UPEC
+        cv2.rectangle(header, (0, 0), (PRINT_W, 8), (0, 120, 50), -1)
+        # Línea inferior del encabezado
+        cv2.line(header, (0, HEADER_H - 4), (PRINT_W, HEADER_H - 4), (0, 120, 50), 3)
+
+        # Logo UPEC a la izquierda
+        logo_x = 20
+        if self._upec_logo is not None:
+            logo_h_target = HEADER_H - 30
+            logo_src = self._upec_logo
+            lh, lw = logo_src.shape[:2]
+            logo_scale = logo_h_target / lh
+            lw_new = int(lw * logo_scale)
+            lh_new = logo_h_target
+            logo_resized = cv2.resize(logo_src, (lw_new, lh_new), interpolation=cv2.INTER_AREA)
+            # Soporte RGBA
+            ly1, ly2 = 15, 15 + lh_new
+            lx1, lx2 = logo_x, logo_x + lw_new
+            if logo_resized.shape[2] == 4:
+                alpha_ch = logo_resized[:, :, 3:4] / 255.0
+                rgb      = logo_resized[:, :, :3]
+                bg_roi   = header[ly1:ly2, lx1:lx2]
+                header[ly1:ly2, lx1:lx2] = (rgb * alpha_ch + bg_roi * (1 - alpha_ch)).astype(np.uint8)
+            else:
+                header[ly1:ly2, lx1:lx2] = logo_resized
+            text_x = lx2 + 30
+        else:
+            text_x = logo_x
+
+        # Texto institucional centrado en la parte restante del encabezado
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        title1 = "Universidad Politecnica del Carchi"
+        title2 = "Carrera de Computacion"
+        title3 = "Magic Paint - Pintura con Gestos de Mano"
+
+        available_w = PRINT_W - text_x - 20
+        center_x = text_x + available_w // 2
+
+        # Línea 1 — nombre institución
+        (tw1, _), _ = cv2.getTextSize(title1, font, 0.95, 2)
+        cv2.putText(header, title1, (center_x - tw1//2, 55),
+                    font, 0.95, (0, 100, 40), 2, cv2.LINE_AA)
+        # Línea 2 — carrera
+        (tw2, _), _ = cv2.getTextSize(title2, font, 0.75, 2)
+        cv2.putText(header, title2, (center_x - tw2//2, 92),
+                    font, 0.75, (30, 80, 30), 2, cv2.LINE_AA)
+        # Línea 3 — título de la actividad
+        (tw3, _), _ = cv2.getTextSize(title3, font, 0.55, 1)
+        cv2.putText(header, title3, (center_x - tw3//2, 122),
+                    font, 0.55, (80, 80, 80), 1, cv2.LINE_AA)
+        # Fecha
+        date_str = datetime.now().strftime("%d/%m/%Y  %H:%M")
+        (twd, _), _ = cv2.getTextSize(date_str, font, 0.44, 1)
+        cv2.putText(header, date_str, (PRINT_W - twd - 20, 148),
+                    font, 0.44, (120, 120, 120), 1, cv2.LINE_AA)
+
+        # 4. Pie de página
+        FOOTER_H = 40
+        footer = np.full((FOOTER_H, PRINT_W, 3), 255, dtype=np.uint8)
+        cv2.rectangle(footer, (0, 0), (PRINT_W, 4), (0, 120, 50), -1)
+        put_text_centered(footer, "Universidad Politecnica del Carchi  -  UPEC  |  www.upec.edu.ec",
+                          PRINT_W//2, 26, 0.42, (80, 80, 80), 1)
+
+        # 5. Ensamblar página completa
+        page = np.vstack([header, art_resized, footer])
+
+        # 6. Guardar
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = os.path.join(self.cfg["save_dir"], f"impresion_upec_{ts}.png")
+        cv2.imwrite(out_path, page)
+
+        # 7. Mostrar ventana de previsualización con instrucción de impresión
+        win_print = "Vista Previa de Impresion - Cierra con ESC"
+        preview_scale = min(1.0, 900 / page.shape[0])
+        preview_w = int(page.shape[1] * preview_scale)
+        preview_h = int(page.shape[0] * preview_scale)
+        preview = cv2.resize(page, (preview_w, preview_h), interpolation=cv2.INTER_AREA)
+
+        # Banner de instrucción
+        banner_h = 36
+        banner = np.full((banner_h, preview_w, 3), (30, 30, 30), dtype=np.uint8)
+        cv2.putText(banner,
+                    f"Archivo: {out_path}   |   Abre el archivo y usa Ctrl+P para imprimir   |   ESC para cerrar",
+                    (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 230, 200), 1, cv2.LINE_AA)
+        final_preview = np.vstack([banner, preview])
+
+        cv2.namedWindow(win_print, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(win_print, preview_w, preview_h + banner_h)
+        cv2.imshow(win_print, final_preview)
+
+        self._notify(f"Impresion guardada!", UI["tool_print"])
+        print(f"[OK] Impresion UPEC guardada en: {out_path}")
+
+        # Espera hasta ESC o click en X — no bloquea el loop principal
+        # (el usuario cierra la ventana cuando quiera)
+        return out_path
+
     def _build_ui(self):
         W, H = self.W, self.H
-
         self.SIDEBAR_W = 160
         self.SIDEBAR_H = H
 
@@ -883,7 +987,6 @@ class VirtualPainter:
         BTN_H = 48
         BTN_X = 10
         BTN_GAP = 6
-
         start_y = 140
 
         def btn_y(i): return start_y + i * (BTN_H + BTN_GAP)
@@ -903,6 +1006,7 @@ class VirtualPainter:
             "SAVE":      (right_x, btn_y(3), right_x+BTN_W, btn_y(3)+BTN_H),
             "OPEN_IMG":  (right_x, btn_y(4), right_x+BTN_W, btn_y(4)+BTN_H),
             "FREE_MODE": (right_x, btn_y(5), right_x+BTN_W, btn_y(5)+BTN_H),
+            "PRINT":     (right_x, btn_y(6), right_x+BTN_W, btn_y(6)+BTN_H),  # NUEVO
         }
 
         self.buttons = {**self.left_buttons, **self.right_buttons}
@@ -999,6 +1103,7 @@ class VirtualPainter:
         if   name == "UNDO":     self.undo()
         elif name == "REDO":     self.redo()
         elif name == "SAVE":     self.save_drawing(frame_bg)
+        elif name == "PRINT":    self.print_drawing(frame_bg)   # NUEVO
         elif name == "CLEAR":
             self._push_undo()
             if self.app_mode == APP_MODE_COLOR and self.color_image_orig is not None:
@@ -1046,6 +1151,7 @@ class VirtualPainter:
         if self.app_mode == APP_MODE_FREE:
             self.mouse_ctrl.release_all()
             self.app_mode = APP_MODE_PAINT
+            self._free_bg_cache = None  # invalidar caché
             self._notify("Modo: Pintura Libre", UI["mode_paint"])
         else:
             if not PYAUTOGUI_OK:
@@ -1053,6 +1159,7 @@ class VirtualPainter:
                 return
             self.mouse_ctrl.release_all()
             self.app_mode = APP_MODE_FREE
+            self._free_bg_cache = None  # invalidar caché
             self._notify("MODO LIBRE - Controla el mouse!", UI["mode_free"])
 
     def _process_free_mode(self, lm, gesture):
@@ -1077,22 +1184,15 @@ class VirtualPainter:
                 "is_dragging": self.mouse_ctrl.is_dragging}
 
     def _merge_canvas(self, frame):
-        """Fondo degradado cielo + nubes animadas + canvas de pintura encima."""
         H, W = frame.shape[:2]
         sky = np.zeros((H, W, 3), dtype=np.uint8)
-
-        # Degradado cielo: azul arriba → crema abajo
         for y in range(H):
             t = y / H
             b = int(255*(1-t) + 230*t)
             g = int(210*(1-t) + 245*t)
             r = int(135*(1-t) + 255*t)
             sky[y, :] = (b, g, r)
-
-        # Nubes animadas
         draw_clouds(sky, time.time())
-
-        # Canvas de pintura encima
         op = self.cfg["canvas_opacity"]
         if np.any(self.canvas):
             mask = (self.canvas.sum(axis=2) > 0)
@@ -1101,11 +1201,30 @@ class VirtualPainter:
                     sky[mask], 1-op, self.canvas[mask], op, 0)
         return sky
 
+    # ── OPTIMIZACIÓN: fondo modo libre con caché ──────────────────────
+    def _build_free_bg(self, frame):
+        """
+        Construye el fondo del modo libre. Se cachea cada N frames para
+        evitar recalcular el degradado y las nubes en cada frame.
+        """
+        output = np.zeros((self.H, self.W, 3), dtype=np.uint8)
+        # Degradado — vectorizado con numpy (mucho más rápido que loop)
+        y_idx = np.arange(self.H, dtype=np.float32) / self.H
+        b_chan = (255 * (1 - y_idx) + 230 * y_idx).astype(np.uint8)
+        g_chan = (210 * (1 - y_idx) + 245 * y_idx).astype(np.uint8)
+        r_chan = (135 * (1 - y_idx) + 255 * y_idx).astype(np.uint8)
+        output[:, :, 0] = b_chan[:, np.newaxis]
+        output[:, :, 1] = g_chan[:, np.newaxis]
+        output[:, :, 2] = r_chan[:, np.newaxis]
+        draw_clouds(output, time.time())
+        # Blend con cámara: sólo 25% cámara, más ligero
+        cv2.addWeighted(frame, 0.25, output, 0.75, 0, output)
+        return output
+
     def _update_effects(self, frame):
         for p in self._particles:
             p.update()
             p.draw(frame)
-
         alive = []
         for s in self._paint_splashes:
             x, y, r, col, age, max_age = s
@@ -1118,7 +1237,6 @@ class VirtualPainter:
                 s[4] += 1
                 alive.append(s)
         self._paint_splashes = alive
-
         for i, (tx, ty, tc) in enumerate(self._trail):
             if i == 0: continue
             a  = (i+1) / len(self._trail)
@@ -1128,7 +1246,6 @@ class VirtualPainter:
             cv2.addWeighted(ov, a*0.4, frame, 1-a*0.4, 0, frame)
 
     def _draw_paint_blobs(self, frame, t):
-        """Manchas de pintura animadas en el borde inferior de cada sidebar."""
         paint_colors = [
             (80,107,255),(80,202,254),(80,222,100),
             (251,219,72),(60,159,255),(245,110,197),
@@ -1183,27 +1300,25 @@ class VirtualPainter:
         draw_gradient_bar(frame, self.SIDEBAR_W, header_h-2, W-self.SIDEBAR_W, header_h,
                           UI["vivo_cyan"], UI["vivo_rosa"])
 
-        # ── Panel título con fondo redondeado ──────────────────────────
+        # ── Panel título ───────────────────────────────────────────────
         cv2.rectangle(frame, (4, 4), (self.SIDEBAR_W-4, 130), (255, 245, 220), -1)
         cv2.rectangle(frame, (4, 4), (self.SIDEBAR_W-4, 130), UI["vivo_naranja"], 2)
-
-        # Título animado letra a letra
         draw_animated_title(frame, self.SIDEBAR_W//2, 38, t)
-
         draw_gradient_bar(frame, 8, 80, self.SIDEBAR_W-8, 82,
                           UI["vivo_cyan"], UI["vivo_rosa"])
-
-        put_text_centered(frame, "v4.2", self.SIDEBAR_W//2, 96,
+        put_text_centered(frame, "v5.0", self.SIDEBAR_W//2, 96,
                           0.38, UI["text_claro"], 1)
         put_text_centered(frame, "GESTOS", self.SIDEBAR_W//2, 114,
                           0.38, UI["text_claro"], 1)
 
-        # ── Botones izquierdos ─────────────────────────────────────────
+        # ══════════════════════════════════════════════════════════════
+        #  BOTONES IZQUIERDOS — colores saturados y texto blanco
+        # ══════════════════════════════════════════════════════════════
         LEFT_BTN_INFO = {
-            "BRUSH":        ("PINCEL",   UI["tool_brush"],  "[B]"),
-            "FILL":         ("RELLENO",  UI["tool_fill"],   "[F]"),
-            "ERASER":       ("BORRADOR", UI["tool_eraser"], "[X]"),
-            "COLOR_PICKER": ("COLORES",  UI["tool_color"],  "[C]"),
+            "BRUSH":        ("PINCEL",   UI["tool_brush"],  "B"),
+            "FILL":         ("RELLENO",  UI["tool_fill"],   "F"),
+            "ERASER":       ("BORRADOR", UI["tool_eraser"], "X"),
+            "COLOR_PICKER": ("COLORES",  UI["tool_color"],  "C"),
         }
 
         for name, (x1, y1, x2, y2) in self.left_buttons.items():
@@ -1214,40 +1329,61 @@ class VirtualPainter:
                         (name == "FILL"   and self.active_tool == TOOL_FILL)  or \
                         (name == "ERASER" and self.active_tool == TOOL_ERASER)
 
-            bg = tuple(int(c*0.18) for c in accent) if is_active \
-                 else (255, 240, 210) if is_hov else (255, 249, 230)
-
+            # Fondo: color sólido del botón (activo=más oscuro, hover=acento, normal=acento claro)
             if is_active:
-                for expand in [4, 3, 2]:
+                # Activo: relleno sólido con el color del botón, más oscuro
+                bg = tuple(max(0, int(c * 0.65)) for c in accent)
+            elif is_hov:
+                bg = accent
+            else:
+                # Normal: versión semisaturada del color (más visible que antes)
+                bg = tuple(min(255, int(c * 0.55) + 60) for c in accent)
+
+            # Resplandor activo
+            if is_active:
+                for expand in [5, 3, 1]:
                     ov = frame.copy()
                     draw_rounded_rect(ov, x1-expand, y1-expand,
-                                      x2+expand, y2+expand, 8, accent, 1)
-                    cv2.addWeighted(ov, 0.10, frame, 0.90, 0, frame)
+                                      x2+expand, y2+expand, 8, accent, 2)
+                    cv2.addWeighted(ov, 0.18, frame, 0.82, 0, frame)
 
             draw_rounded_rect(frame, x1, y1, x2, y2, 6, bg, -1)
-            border_c = accent if is_active else (UI["border_brillo"] if is_hov else UI["border_claro"])
-            bth      = 2 if (is_active or is_hov) else 1
+
+            # Borde: blanco si activo/hover para máximo contraste
+            border_c = (255, 255, 255) if (is_active or is_hov) else accent
+            bth      = 3 if is_active else (2 if is_hov else 1)
             draw_rounded_rect(frame, x1, y1, x2, y2, 6, border_c, bth)
 
-            put_text_centered(frame, icon, x1+22, (y1+y2)//2,
-                              0.48, accent if (is_active or is_hov) else UI["text_claro"], 1)
-            cv2.putText(frame, label, (x1+44, (y1+y2)//2+6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.42,
-                        UI["text_blanco"] if (is_active or is_hov) else UI["text_claro"],
-                        1, cv2.LINE_AA)
+            # Icono (fondo circular oscuro para legibilidad)
+            icon_cx = x1 + 22
+            icon_cy = (y1 + y2) // 2
+            cv2.circle(frame, (icon_cx, icon_cy), 13, (0, 0, 0), -1)
+            cv2.circle(frame, (icon_cx, icon_cy), 13, (255, 255, 255), 1)
+            (iw, ih), _ = cv2.getTextSize(icon, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
+            cv2.putText(frame, icon, (icon_cx - iw//2, icon_cy + ih//2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2, cv2.LINE_AA)
 
+            # Texto label — siempre blanco para contraste
+            cv2.putText(frame, label, (x1+44, (y1+y2)//2+6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.46,
+                        (255, 255, 255), 2, cv2.LINE_AA)
+
+            # Barra de progreso hover
             if is_hov and self._btn_hover_progress > 0:
                 prog = int((x2-x1) * self._btn_hover_progress)
-                draw_rounded_rect(frame, x1, y2-5, x1+prog, y2, 2, accent, -1)
+                draw_rounded_rect(frame, x1, y2-5, x1+prog, y2, 2, (255,255,255), -1)
 
-        # ── Botones derechos ───────────────────────────────────────────
+        # ══════════════════════════════════════════════════════════════
+        #  BOTONES DERECHOS — mismo esquema de colores saturados
+        # ══════════════════════════════════════════════════════════════
         RIGHT_BTN_INFO = {
-            "UNDO":     ("DESHACER", UI["tool_undo"],  "<-"),
-            "REDO":     ("REHACER",  UI["tool_undo"],  "->"),
-            "CLEAR":    ("LIMPIAR",  UI["tool_clear"], "CLR"),
-            "SAVE":     ("GUARDAR",  UI["tool_save"],  "SAV"),
-            "OPEN_IMG": ("ABRIR",    UI["tool_open"],  "IMG"),
-            "FREE_MODE":("LIBRE",    UI["tool_free"],  "FREE"),
+            "UNDO":     ("DESHACER", UI["tool_undo"],  "<"),
+            "REDO":     ("REHACER",  UI["tool_undo"],  ">"),
+            "CLEAR":    ("LIMPIAR",  UI["tool_clear"], "C"),
+            "SAVE":     ("GUARDAR",  UI["tool_save"],  "S"),
+            "OPEN_IMG": ("ABRIR",    UI["tool_open"],  "O"),
+            "FREE_MODE":("LIBRE",    UI["tool_free"],  "L"),
+            "PRINT":    ("IMPRIMIR", UI["tool_print"], "P"),   # NUEVO
         }
 
         for name, (x1, y1, x2, y2) in self.right_buttons.items():
@@ -1256,31 +1392,41 @@ class VirtualPainter:
             is_hov    = (self._hover_btn == name)
             is_active = (name == "FREE_MODE" and is_free)
 
-            bg = tuple(int(c*0.18) for c in accent) if is_active \
-                 else (255, 240, 210) if is_hov else (255, 249, 230)
+            if is_active:
+                bg = tuple(max(0, int(c * 0.65)) for c in accent)
+            elif is_hov:
+                bg = accent
+            else:
+                bg = tuple(min(255, int(c * 0.55) + 60) for c in accent)
 
             if is_active:
-                for expand in [4, 3, 2]:
+                for expand in [5, 3, 1]:
                     ov = frame.copy()
                     draw_rounded_rect(ov, x1-expand, y1-expand,
-                                      x2+expand, y2+expand, 8, accent, 1)
-                    cv2.addWeighted(ov, 0.10, frame, 0.90, 0, frame)
+                                      x2+expand, y2+expand, 8, accent, 2)
+                    cv2.addWeighted(ov, 0.18, frame, 0.82, 0, frame)
 
             draw_rounded_rect(frame, x1, y1, x2, y2, 6, bg, -1)
-            border_c = accent if is_active else (UI["border_brillo"] if is_hov else UI["border_claro"])
-            bth      = 2 if (is_active or is_hov) else 1
+
+            border_c = (255, 255, 255) if (is_active or is_hov) else accent
+            bth      = 3 if is_active else (2 if is_hov else 1)
             draw_rounded_rect(frame, x1, y1, x2, y2, 6, border_c, bth)
 
-            put_text_centered(frame, icon, x1+22, (y1+y2)//2,
-                              0.48, accent if (is_active or is_hov) else UI["text_claro"], 1)
+            icon_cx = x1 + 22
+            icon_cy = (y1 + y2) // 2
+            cv2.circle(frame, (icon_cx, icon_cy), 13, (0, 0, 0), -1)
+            cv2.circle(frame, (icon_cx, icon_cy), 13, (255, 255, 255), 1)
+            (iw, ih), _ = cv2.getTextSize(icon, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
+            cv2.putText(frame, icon, (icon_cx - iw//2, icon_cy + ih//2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2, cv2.LINE_AA)
+
             cv2.putText(frame, label, (x1+44, (y1+y2)//2+6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.42,
-                        UI["text_blanco"] if (is_active or is_hov) else UI["text_claro"],
-                        1, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.46,
+                        (255, 255, 255), 2, cv2.LINE_AA)
 
             if is_hov and self._btn_hover_progress > 0:
                 prog = int((x2-x1) * self._btn_hover_progress)
-                draw_rounded_rect(frame, x1, y2-5, x1+prog, y2, 2, accent, -1)
+                draw_rounded_rect(frame, x1, y2-5, x1+prog, y2, 2, (255,255,255), -1)
 
         # ── Badge de modo actual ───────────────────────────────────────
         mode_labels = {
@@ -1351,9 +1497,7 @@ class VirtualPainter:
     def _draw_cursor(self, frame, pt, gesture):
         col = self.current_color if not self.eraser_mode else (180, 160, 130)
         r   = self.brush_size + 4
-
         self._trail.append((pt[0], pt[1], col))
-
         if self.active_tool == TOOL_FILL and gesture == "DRAW":
             cv2.rectangle(frame, (pt[0]-14, pt[1]-8),
                           (pt[0]+14, pt[1]+18), col, -1)
@@ -1386,9 +1530,7 @@ class VirtualPainter:
         dist = info["pinch_dist"]
         is_p = info["is_pinching"]
         is_d = info["is_dragging"]
-
         cv2.line(output, thumb, idx, UI["text_claro"], 1, cv2.LINE_AA)
-
         if is_d:
             draw_glow_circle(output, idx[0], idx[1], 16, UI["vivo_naranja"], 0.5)
             cv2.putText(output, "DRAG", (idx[0]+22, idx[1]-8),
@@ -1398,7 +1540,6 @@ class VirtualPainter:
         else:
             cv2.circle(output, idx, 14, UI["mode_free"], 2, cv2.LINE_AA)
             cv2.circle(output, idx, 4,  UI["mode_free"], -1)
-
         bx, by = self.SIDEBAR_W + 20, self.H - 60
         bw     = 180
         thr    = self.cfg["pinch_threshold"]
@@ -1422,7 +1563,7 @@ class VirtualPainter:
             print("[ERROR] No se pudo abrir la camara.")
             return
 
-        win = "Magic Paint - Gestos de Mano v4.2"
+        win = "Magic Paint - Gestos de Mano v5.0"
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(win, self.W, self.H)
         _print_banner()
@@ -1453,7 +1594,13 @@ class VirtualPainter:
             fps = float(np.mean(self._fps_buf))
 
             self._frame_counter += 1
-            process_hands = (self._frame_counter % (self.cfg["skip_frames_detection"] + 1) == 0)
+
+            # ── OPTIMIZACIÓN: skip más agresivo en modo libre ─────────
+            if self.app_mode == APP_MODE_FREE:
+                skip = self.cfg["skip_frames_free_mode"]
+            else:
+                skip = self.cfg["skip_frames_detection"]
+            process_hands = (self._frame_counter % (skip + 1) == 0)
 
             if process_hands:
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -1469,11 +1616,9 @@ class VirtualPainter:
                     ix = int(lm[8].x*self.W);  iy = int(lm[8].y*self.H)
                     tx = int(lm[4].x*self.W);  ty = int(lm[4].y*self.H)
                     pinch_d = math.dist((tx,ty),(ix,iy))
-
                     mn, mx = self.cfg["min_brush_size"], self.cfg["max_brush_size"]
                     self.brush_size = self._smooth_bs(
                         int(mn + float(np.clip((pinch_d-20)/200,0,1))*(mx-mn)))
-
                     raw_g = self._detect_gesture(lm)
                     self._last_gesture = self._stable_gesture(raw_g)
                 else:
@@ -1532,7 +1677,6 @@ class VirtualPainter:
                                 self._check_btn_hover(_smooth_d, last_bg)
                             self.drawing = False; self.prev_point = None
                             self._fill_done = False
-
                         elif gesture == "DRAW" and _smooth_d:
                             self._hover_btn        = None
                             self._hover_btn_frames = 0
@@ -1581,19 +1725,14 @@ class VirtualPainter:
                             self.drawing    = False; self.prev_point = None
                             self._fill_done = False
 
-            # ── Renderizado ────────────────────────────────────────────
+            # ── Renderizado ─────────────────────────────────────────────
             if self.app_mode == APP_MODE_FREE:
-                # Fondo cielo con nubes también en modo libre
-                output = np.zeros((self.H, self.W, 3), dtype=np.uint8)
-                for y in range(self.H):
-                    yf = y / self.H
-                    b  = int(255*(1-yf) + 230*yf)
-                    g  = int(210*(1-yf) + 245*yf)
-                    r  = int(135*(1-yf) + 255*yf)
-                    output[y, :] = (b, g, r)
-                draw_clouds(output, time.time())
-                ov = frame.copy()
-                cv2.addWeighted(ov, 0.25, output, 0.75, 0, output)
+                # OPTIMIZACIÓN: fondo con caché + degradado vectorizado
+                if (self._free_bg_cache is None or
+                        self._frame_counter - self._free_bg_frame_cnt >= self._free_bg_interval):
+                    self._free_bg_cache     = self._build_free_bg(frame)
+                    self._free_bg_frame_cnt = self._frame_counter
+                output = self._free_bg_cache.copy()
             elif self.app_mode == APP_MODE_COLOR and self.color_layer is not None:
                 output = cv2.addWeighted(self.color_layer, 0.88, frame, 0.12, 0)
             else:
@@ -1625,11 +1764,13 @@ class VirtualPainter:
             elif key == ord('1'):
                 self.mouse_ctrl.release_all()
                 self.app_mode = APP_MODE_PAINT
+                self._free_bg_cache = None
                 self._notify("Modo: Pintura Libre", UI["mode_paint"])
             elif key == ord('2'):
                 if self.color_layer is not None:
                     self.mouse_ctrl.release_all()
                     self.app_mode = APP_MODE_COLOR
+                    self._free_bg_cache = None
                     self._notify("Modo: Colorear Imagen", UI["mode_color"])
                 else:
                     self._notify("Carga una imagen primero (tecla O)", UI["vivo_rojo"])
@@ -1667,6 +1808,8 @@ class VirtualPainter:
                     cv2.WINDOW_FULLSCREEN if self.fullscreen else cv2.WINDOW_NORMAL)
             elif key in (ord('s'),ord('S')):
                 self.save_drawing(last_bg)
+            elif key in (ord('p'),ord('P')):         # NUEVO: tecla P para imprimir
+                self.print_drawing(last_bg)
             elif key == 26:
                 self.undo()
             elif key == 25:
@@ -1728,16 +1871,14 @@ def create_sample_images(out_dir):
 
 def _print_banner():
     print("=" * 68)
-    print("   M A G I C   P A I N T  v4.2  -  Feria de Tecnologia")
-    print("   Tema: Niños - Colores Calidos y Alegres")
+    print("   M A G I C   P A I N T  v5.0  -  Feria de Tecnologia")
+    print("   Universidad Politecnica del Carchi - Carrera de Computacion")
     print("=" * 68)
     print("  Modos:   [1] Pintura libre   [2] Colorear   [3] Modo Libre")
     print("  Herram:  [B] Pincel  [K] Fill  [E] Borrador")
-    print("  Imagen:  [O] Abrir  [R] Restaurar  [S] Guardar")
+    print("  Imagen:  [O] Abrir  [R] Restaurar  [S] Guardar  [P] Imprimir")
     print("  Colores: [C] Selector de colores (48 colores)")
     print("  Ctrl+Z Undo  |  Ctrl+Y Redo  |  H HUD  |  F Full  |  Q Salir")
-    print("=" * 68)
-    print("  TEMA: Cielo azul, nubes animadas, letras de colores")
     print("=" * 68)
     if not PYAUTOGUI_OK:
         print("  [!] Instala pyautogui para Modo Libre: pip install pyautogui")
