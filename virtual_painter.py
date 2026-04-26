@@ -912,8 +912,8 @@ class VirtualPainter:
 
         # Texto institucional centrado en la parte restante del encabezado
         font = cv2.FONT_HERSHEY_SIMPLEX
-        title1 = "Universidad Politecnica del Carchi"
-        title2 = "Carrera de Computacion"
+        title1 = "UNIVERSIDAD POLITECNICA ESTATAL DEL CARCHI"
+        title2 = "CARRERA DE COMPUTACION"
         title3 = "Magic Paint - Pintura con Gestos de Mano"
 
         available_w = PRINT_W - text_x - 20
@@ -941,7 +941,7 @@ class VirtualPainter:
         FOOTER_H = 40
         footer = np.full((FOOTER_H, PRINT_W, 3), 255, dtype=np.uint8)
         cv2.rectangle(footer, (0, 0), (PRINT_W, 4), (0, 120, 50), -1)
-        put_text_centered(footer, "Universidad Politecnica del Carchi  -  UPEC  |  www.upec.edu.ec",
+        put_text_centered(footer, "UNIVERSIDAD POLITECNICA ESTATAL DEL CARCHI  -  UPEC  |  www.upec.edu.ec",
                           PRINT_W//2, 26, 0.42, (80, 80, 80), 1)
 
         # 5. Ensamblar página completa
