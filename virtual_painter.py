@@ -1669,7 +1669,7 @@ class VirtualPainter:
                                 self.active_tool = TOOL_ERASER
                                 self.eraser_mode = True
                                 self._notify("Borrador activado", UI["tool_eraser"])
-                        elif gesture == "OPEN":
+                        elif gesture == "OPEN": 
                             self.drawing = False; self.prev_point = None
 
                         if gesture in ("SELECT","OPEN","PINCH"):
