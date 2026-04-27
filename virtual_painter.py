@@ -862,7 +862,7 @@ class ImageSelector:
 
 
 # =============================================================
-#  CLASE PRINCIPAL
+#  CLASE PRINCIPAL.
 # =============================================================
 class VirtualPainter:
 
