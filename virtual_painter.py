@@ -914,7 +914,11 @@ class VirtualPainter:
         font = cv2.FONT_HERSHEY_SIMPLEX
         title1 = "UNIVERSIDAD POLITECNICA ESTATAL DEL CARCHI"
         title2 = "CARRERA DE COMPUTACION"
+<<<<<<< Updated upstream
         title3 = "Feria Agroalimentaria, Tecnologica y Turistica Sostenible UPEC- Pintura con Gestos de Mano"
+=======
+        title3 = "Magic Paint - Pintura con Gestos de Mano"
+>>>>>>> Stashed changes
 
         available_w = PRINT_W - text_x - 20
         center_x = text_x + available_w // 2
@@ -1669,7 +1673,7 @@ class VirtualPainter:
                                 self.active_tool = TOOL_ERASER
                                 self.eraser_mode = True
                                 self._notify("Borrador activado", UI["tool_eraser"])
-                        elif gesture == "OPEN":
+                        elif gesture == "OPEN": 
                             self.drawing = False; self.prev_point = None
 
                         if gesture in ("SELECT","OPEN","PINCH"):
