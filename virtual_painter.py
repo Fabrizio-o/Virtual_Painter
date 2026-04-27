@@ -367,7 +367,7 @@ def draw_glass_button(frame, x1, y1, x2, y2,
 
 
 def _fill_rounded(img, x1, y1, x2, y2, r, color):
-    """Rellena rectángulo con esquinas redondeadas."""
+    """Rellena rectángulo con esquinas redondeadas.g"""
     cv2.rectangle(img, (x1+r, y1), (x2-r, y2), color, -1)
     cv2.rectangle(img, (x1, y1+r), (x2, y2-r), color, -1)
     for cx2, cy2 in [(x1+r, y1+r), (x2-r, y1+r), (x1+r, y2-r), (x2-r, y2-r)]:
