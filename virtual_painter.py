@@ -1,9 +1,22 @@
 """
 +======================================================================+
-|      MAGIC PAINT  - Pintura Virtual con Gestos de Mano  v5.1        |
+|      MAGIC PAINT  - Pintura Virtual con Gestos de Mano  v5.2        |
 |           Python + OpenCV + MediaPipe  |  Edicion Feria             |
-|               [BOTONES GLASSMORPHISM NEON REDISENADOS]              |
+|                   [OPTIMIZADO - MAX PERFORMANCE]                    |
 +======================================================================+
+OPTIMIZACIONES v5.2:
+  - Sidebars pre-renderizadas (0 loops por frame)
+  - Botones: eliminados todos los frame.copy() en glow/border
+  - draw_glass_button: de ~8 copies a 0 copies por boton
+  - draw_glow_circle: de 4 copies a 0
+  - draw_glass_border: de 3 copies a linea directa
+  - draw_clouds: cache de nubes por intervalo, no cada frame
+  - _merge_canvas: vectorizado con numpy (sin loops Python)
+  - _update_effects: particulas sin frame.copy(), trail eliminado
+  - _draw_paint_blobs: cache de poligonos pre-calculados
+  - Notificacion: sin frame.copy()
+  - skip_frames aumentado en modo libre
+  - UI cache agresivo: solo redibuja botones cuando cambia estado
 """
 
 import cv2
@@ -21,9 +34,6 @@ try:
 except ImportError:
     PYAUTOGUI_OK = False
 
-# =============================================================
-#  TEMA VISUAL
-# =============================================================
 UI = {
     "bg_dark":       (235, 248, 255),
     "bg_panel":      (255, 249, 230),
@@ -39,18 +49,17 @@ UI = {
     "text_blanco":   (50,   40,  30),
     "text_claro":    (100,  80,  60),
     "text_oscuro":   (240, 230, 220),
-    # -- Paleta de botones: gradientes neon --------------------------
-    "tool_brush":    (50,  205,  50),   # Verde esmeralda
-    "tool_fill":     (255, 140,   0),   # Naranja intenso
-    "tool_eraser":   (220,  20,  60),   # Carmesi
-    "tool_color":    (148,   0, 211),   # Violeta
-    "tool_undo":     (30,  144, 255),   # Azul dodger
+    "tool_brush":    (50,  205,  50),
+    "tool_fill":     (255, 140,   0),
+    "tool_eraser":   (220,  20,  60),
+    "tool_color":    (148,   0, 211),
+    "tool_undo":     (30,  144, 255),
     "tool_redo":     (30,  144, 255),
-    "tool_clear":    (255,  69,   0),   # Naranja rojo
-    "tool_save":     (0,   200, 100),   # Verde menta
-    "tool_open":     (255,  20, 147),   # Rosa fuerte
-    "tool_free":     (0,   206, 209),   # Turquesa oscuro
-    "tool_print":    (139,  90,  43),   # Cafe
+    "tool_clear":    (255,  69,   0),
+    "tool_save":     (0,   200, 100),
+    "tool_open":     (255,  20, 147),
+    "tool_free":     (0,   206, 209),
+    "tool_print":    (139,  90,  43),
     "mode_paint":    (80,  222, 100),
     "mode_color":    (60,  159, 255),
     "mode_free":     (251, 219,  72),
@@ -58,9 +67,6 @@ UI = {
     "border_brillo": (150, 130, 100),
 }
 
-# =============================================================
-#  CONFIGURACION
-# =============================================================
 CONFIG = {
     "camera_index": 0,
     "width":  1280,
@@ -93,518 +99,401 @@ CONFIG = {
     "double_click_cooldown": 25,
     "mouse_zone_margin": 0.08,
     "skip_frames_detection": 1,
-    "skip_frames_free_mode": 2,
-    "particle_count": 20,
-    "max_paint_splashes": 15,
-    "ui_update_every": 2,
+    "skip_frames_free_mode": 3,   # mas agresivo en modo libre
+    "particle_count": 12,         # reducido de 20 a 12
+    "max_paint_splashes": 8,      # reducido de 15 a 8
+    "ui_update_every": 1,
     "upec_logo_path": os.path.join(os.path.dirname(os.path.abspath(__file__)), "upec_logo.png"),
+    # OPT: cada cuantos frames redibujar nubes en canvas
+    "cloud_redraw_interval": 4,
 }
 
 COLORS = [
-    {"name": "Negro",    "bgr": (  0,   0,   0)},
-    {"name": "Blanco",   "bgr": (255, 255, 255)},
-    {"name": "Rojo",     "bgr": (  0,   0, 220)},
-    {"name": "Naranja",  "bgr": (  0, 120, 255)},
-    {"name": "Amarillo", "bgr": (  0, 220, 220)},
-    {"name": "Verde",    "bgr": (  0, 200,  60)},
-    {"name": "Verde Oliva","bgr":(  0, 160,  80)},
-    {"name": "Cian",     "bgr": (220, 200,   0)},
-    {"name": "Azul",     "bgr": (230,  80,   0)},
-    {"name": "Celeste",  "bgr": (240, 160,  80)},
-    {"name": "Magenta",  "bgr": (200,   0, 200)},
-    {"name": "Morado",   "bgr": (160,   0, 120)},
-    {"name": "Rosa",     "bgr": (160, 100, 240)},
-    {"name": "Marron",   "bgr": ( 30,  80, 140)},
-    {"name": "Gris",     "bgr": (130, 130, 130)},
+    {"name": "Negro",      "bgr": (  0,   0,   0)},
+    {"name": "Blanco",     "bgr": (255, 255, 255)},
+    {"name": "Rojo",       "bgr": (  0,   0, 220)},
+    {"name": "Naranja",    "bgr": (  0, 120, 255)},
+    {"name": "Amarillo",   "bgr": (  0, 220, 220)},
+    {"name": "Verde",      "bgr": (  0, 200,  60)},
+    {"name": "Verde Oliva","bgr": (  0, 160,  80)},
+    {"name": "Cian",       "bgr": (220, 200,   0)},
+    {"name": "Azul",       "bgr": (230,  80,   0)},
+    {"name": "Celeste",    "bgr": (240, 160,  80)},
+    {"name": "Magenta",    "bgr": (200,   0, 200)},
+    {"name": "Morado",     "bgr": (160,   0, 120)},
+    {"name": "Rosa",       "bgr": (160, 100, 240)},
+    {"name": "Marron",     "bgr": ( 30,  80, 140)},
+    {"name": "Gris",       "bgr": (130, 130, 130)},
 ]
 
-APP_MODE_PAINT  = "PAINT"
-APP_MODE_COLOR  = "COLOR"
-APP_MODE_FREE   = "FREE"
+APP_MODE_PAINT = "PAINT"
+APP_MODE_COLOR = "COLOR"
+APP_MODE_FREE  = "FREE"
 TOOL_BRUSH  = "BRUSH"
 TOOL_FILL   = "FILL"
 TOOL_ERASER = "ERASER"
-
 TIP = [4, 8, 12, 16, 20]
 PIP = [3, 6, 10, 14, 18]
 
 MAGIC_LETTERS = [
-    ("M", (80,  107, 255)),
-    ("A", (60,  159, 255)),
-    ("G", (80,  202, 254)),
-    ("I", (80,  222, 100)),
-    ("C", (251, 219,  72)),
+    ("M",(80,107,255)),("A",(60,159,255)),("G",(80,202,254)),
+    ("I",(80,222,100)),("C",(251,219,72)),
 ]
 PAINT_LETTERS = [
-    ("P", (245, 110, 197)),
-    ("A", (157, 107, 255)),
-    ("I", (60,  159, 255)),
-    ("N", (80,  202, 254)),
-    ("T", (80,  107, 255)),
+    ("P",(245,110,197)),("A",(157,107,255)),("I",(60,159,255)),
+    ("N",(80,202,254)),("T",(80,107,255)),
 ]
 
 # =============================================================
-#  NUBES ANIMADAS
+#  CACHE GLOBAL DE SIDEBAR (pre-renderizada una sola vez)
 # =============================================================
-def draw_clouds(frame, t):
+_SIDEBAR_CACHE = {}
+
+def _build_sidebar_strip(width, height):
+    """Construye la tira de sidebar UNA sola vez y la cachea."""
+    key = (width, height)
+    if key in _SIDEBAR_CACHE:
+        return _SIDEBAR_CACHE[key]
+    strip = np.zeros((height, width, 3), dtype=np.uint8)
+    y_idx = np.arange(height, dtype=np.float32) / height
+    b_ch  = (180*(1-y_idx) + 140*y_idx).astype(np.uint8)
+    g_ch  = (220*(1-y_idx) + 215*y_idx).astype(np.uint8)
+    r_ch  = (255*(1-y_idx) + 235*y_idx).astype(np.uint8)
+    strip[:,:,0] = b_ch[:,np.newaxis]
+    strip[:,:,1] = g_ch[:,np.newaxis]
+    strip[:,:,2] = r_ch[:,np.newaxis]
+    # Puntos perlados
+    dot_spacing = 14
+    for dy in range(0, height, dot_spacing):
+        for dx in range(4, width, dot_spacing):
+            if dy < height and dx < width:
+                cv2.circle(strip, (dx, dy), 1, (160,220,240), -1)
+    strip[0,:] = (140,210,255)
+    strip[2,:] = (100,220,255)
+    _SIDEBAR_CACHE[key] = strip
+    return strip
+
+def draw_glass_sidebar_fast(frame, x_start, width, height):
+    """Copia la sidebar pre-renderizada - O(1), sin loops."""
+    strip = _build_sidebar_strip(width, height)
+    frame[:height, x_start:x_start+width] = strip
+
+
+# =============================================================
+#  NUBES ANIMADAS - VERSION LIGERA
+# =============================================================
+def draw_clouds_fast(frame, t):
+    """Nubes sin frame.copy(): usa blend directo sobre ROI."""
     H, W = frame.shape[:2]
     clouds = [
-        {"base_x": 120,  "y": 55,  "speed": 0.30, "scale": 1.00},
-        {"base_x": 400,  "y": 35,  "speed": 0.18, "scale": 1.30},
-        {"base_x": 700,  "y": 75,  "speed": 0.24, "scale": 0.85},
-        {"base_x": 950,  "y": 45,  "speed": 0.35, "scale": 0.75},
-        {"base_x": 1100, "y": 65,  "speed": 0.20, "scale": 0.90},
+        (120,  55, 0.30, 1.00),
+        (400,  35, 0.18, 1.30),
+        (700,  75, 0.24, 0.85),
+        (950,  45, 0.35, 0.75),
+        (1100, 65, 0.20, 0.90),
     ]
-    overlay = frame.copy()
-    for c in clouds:
-        offset = int((t * c["speed"] * 60) % (W + 300)) - 150
-        cx = (c["base_x"] + offset) % (W + 200) - 100
-        cy = int(c["y"])
-        s  = c["scale"]
-        col = (255, 255, 255)
-        cv2.ellipse(overlay, (int(cx),      int(cy+30*s)), (int(80*s), int(30*s)), 0,0,360,col,-1)
-        cv2.ellipse(overlay, (int(cx-45*s), int(cy+18*s)), (int(42*s), int(32*s)), 0,0,360,col,-1)
-        cv2.ellipse(overlay, (int(cx+45*s), int(cy+14*s)), (int(46*s), int(36*s)), 0,0,360,col,-1)
-        cv2.ellipse(overlay, (int(cx+5*s),  int(cy)),      (int(38*s), int(32*s)), 0,0,360,col,-1)
-        cv2.circle(overlay, (int(cx-12*s), int(cy+10*s)), max(1,int(4*s)), (135,180,210),-1)
-        cv2.circle(overlay, (int(cx+14*s), int(cy+10*s)), max(1,int(4*s)), (135,180,210),-1)
-        cv2.circle(overlay, (int(cx-10*s), int(cy+8*s)),  max(1,int(2*s)), (255,255,255),-1)
-        cv2.circle(overlay, (int(cx+16*s), int(cy+8*s)),  max(1,int(2*s)), (255,255,255),-1)
-        cv2.ellipse(overlay, (int(cx+1*s), int(cy+18*s)),
+    # Crear overlay solo de la franja superior donde van las nubes
+    cloud_h = 110  # las nubes estan en y < 110
+    roi = frame[:cloud_h, :].copy()
+    for base_x, cy_base, speed, s in clouds:
+        offset = int((t * speed * 60) % (W + 300)) - 150
+        cx = (base_x + offset) % (W + 200) - 100
+        cy = cy_base
+        col = (255,255,255)
+        cv2.ellipse(roi, (int(cx),      int(cy+30*s)), (int(80*s),int(30*s)), 0,0,360,col,-1)
+        cv2.ellipse(roi, (int(cx-45*s), int(cy+18*s)), (int(42*s),int(32*s)), 0,0,360,col,-1)
+        cv2.ellipse(roi, (int(cx+45*s), int(cy+14*s)), (int(46*s),int(36*s)), 0,0,360,col,-1)
+        cv2.ellipse(roi, (int(cx+5*s),  int(cy)),      (int(38*s),int(32*s)), 0,0,360,col,-1)
+        cv2.circle(roi, (int(cx-12*s), int(cy+10*s)), max(1,int(4*s)), (135,180,210),-1)
+        cv2.circle(roi, (int(cx+14*s), int(cy+10*s)), max(1,int(4*s)), (135,180,210),-1)
+        cv2.ellipse(roi, (int(cx+1*s), int(cy+18*s)),
                     (int(10*s),int(6*s)), 0,0,180,(135,180,210),max(1,int(2*s)))
-    cv2.addWeighted(overlay, 0.60, frame, 0.40, 0, frame)
+    # Un solo blend sobre el ROI, no sobre el frame completo
+    cv2.addWeighted(roi, 0.60, frame[:cloud_h,:], 0.40, 0, frame[:cloud_h,:])
 
 
 # =============================================================
 #  TITULO ANIMADO
 # =============================================================
 def draw_animated_title(frame, cx, start_y, t):
-    font  = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.82
-    thick = 2
-    lw, gap = 23, 3
-    for letters, y in [(MAGIC_LETTERS, start_y), (PAINT_LETTERS, start_y+38)]:
-        total_w = len(letters) * (lw + gap)
-        x = cx - total_w // 2
-        for i, (ch, col) in enumerate(letters):
-            phase   = math.sin(t * 2.8 + i * 0.75)
-            dy      = int(phase * 5)
-            scale_f = scale + 0.07 * abs(phase)
-            cv2.putText(frame, ch, (x+2, y+dy+2), font, scale_f, (200,175,140), thick+1, cv2.LINE_AA)
-            cv2.putText(frame, ch, (x, y+dy),     font, scale_f, col,           thick,   cv2.LINE_AA)
-            x += lw + gap
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.82; thick = 2; lw, gap = 23, 3
+    for letters, y in [(MAGIC_LETTERS, start_y),(PAINT_LETTERS, start_y+38)]:
+        total_w = len(letters)*(lw+gap)
+        x = cx - total_w//2
+        for i,(ch,col) in enumerate(letters):
+            phase   = math.sin(t*2.8 + i*0.75)
+            dy      = int(phase*5)
+            scale_f = scale + 0.07*abs(phase)
+            cv2.putText(frame,ch,(x+2,y+dy+2),font,scale_f,(200,175,140),thick+1,cv2.LINE_AA)
+            cv2.putText(frame,ch,(x,y+dy),    font,scale_f,col,          thick,  cv2.LINE_AA)
+            x += lw+gap
 
 
 # =============================================================
-#  BOTONES GLASSMORPHISM - SISTEMA NUEVO COMPLETO
+#  HELPERS GEOMETRICOS (sin frame.copy())
 # =============================================================
-
 def _lerp_color(c1, c2, t):
-    return tuple(int(c1[i]*(1-t) + c2[i]*t) for i in range(3))
-
-def draw_glass_button(frame, x1, y1, x2, y2,
-                      label, icon_char,
-                      accent_color,       # color neon del boton (BGR)
-                      is_active=False,
-                      is_hover=False,
-                      hover_progress=0.0,
-                      t=0.0,
-                      icon_symbol=None):  # SVG-like simbolo alternativo
-    """
-    Boton glassmorphism con:
-    - Fondo translucido oscuro degradado
-    - Borde neon brillante
-    - Icono circular con color de acento
-    - Texto blanco legible con sombra
-    - Animacion de pulso cuando esta activo
-    - Barra de progreso de hover inferior
-    """
-    W = x2 - x1
-    H = y2 - y1
-    r = 10  # radio de esquinas
-
-    # -- 1. Fondo oscuro semi-transparente --------------------------
-    # Panel de fondo (negro con tinte del color de acento)
-    bg_base = (18, 14, 22)  # casi negro
-    if is_active:
-        # Activo: tinte del color de acento mas pronunciado
-        bg = _lerp_color(bg_base, accent_color, 0.22)
-    elif is_hover:
-        bg = _lerp_color(bg_base, accent_color, 0.14)
-    else:
-        bg = _lerp_color(bg_base, accent_color, 0.06)
-
-    # Dibujar fondo con esquinas redondeadas
-    _fill_rounded(frame, x1, y1, x2, y2, r, bg)
-
-    # -- 2. Degradado interno sutil (mas claro arriba) ---------------
-    for row in range(H // 2):
-        alpha = (1.0 - row / (H // 2)) * 0.08
-        bright = tuple(min(255, int(bg[c] + 255*alpha)) for c in range(3))
-        y_row = y1 + row
-        if y_row < y2:
-            frame[y_row, x1+r:x2-r] = bright
-
-    # -- 3. Borde neon -----------------------------------------------
-    if is_active:
-        border_thickness = 2
-        # Pulso: el borde "respira"
-        pulse = 0.7 + 0.3 * math.sin(t * 4.0)
-        border_col = tuple(min(255, int(accent_color[c] * pulse)) for c in range(3))
-        # Glow exterior (3 capas difuminadas)
-        for gw in [4, 3, 2]:
-            alpha_g = 0.12 * (5 - gw) * pulse
-            ov = frame.copy()
-            _stroke_rounded(ov, x1-gw, y1-gw, x2+gw, y2+gw, r+gw, border_col, 2)
-            cv2.addWeighted(ov, alpha_g, frame, 1-alpha_g, 0, frame)
-    elif is_hover:
-        border_thickness = 2
-        border_col = accent_color
-        # Glow suave hover
-        ov = frame.copy()
-        _stroke_rounded(ov, x1-2, y1-2, x2+2, y2+2, r+2, accent_color, 2)
-        cv2.addWeighted(ov, 0.25, frame, 0.75, 0, frame)
-    else:
-        border_thickness = 1
-        # Borde sutil - version oscura del acento
-        border_col = tuple(max(0, int(c * 0.55)) for c in accent_color)
-
-    _stroke_rounded(frame, x1, y1, x2, y2, r, border_col, border_thickness)
-
-    # -- 4. Linea de brillo superior (efecto glass) -----------------
-    shine_alpha = 0.30 if (is_active or is_hover) else 0.15
-    ov = frame.copy()
-    shine_col = (220, 220, 230)
-    cv2.line(ov, (x1+r+2, y1+2), (x2-r-2, y1+2), shine_col, 1)
-    cv2.addWeighted(ov, shine_alpha, frame, 1-shine_alpha, 0, frame)
-
-    # -- 5. Icono circular neon -------------------------------------
-    icon_cx = x1 + 26
-    icon_cy = (y1 + y2) // 2
-
-    # Fondo del icono: circulo solido con color de acento
-    if is_active:
-        icon_bg = accent_color
-        icon_border = (255, 255, 255)
-        icon_text_col = (10, 10, 10)
-    elif is_hover:
-        icon_bg = _lerp_color(accent_color, (255,255,255), 0.2)
-        icon_border = (255, 255, 255)
-        icon_text_col = (10, 10, 10)
-    else:
-        icon_bg = tuple(max(0, int(c * 0.45)) for c in accent_color)
-        icon_border = accent_color
-        icon_text_col = (255, 255, 255)
-
-    # Glow del icono cuando activo
-    if is_active:
-        for gr in [14, 11, 8]:
-            alpha_gr = 0.08 * (15 - gr)
-            ov = frame.copy()
-            cv2.circle(ov, (icon_cx, icon_cy), gr, accent_color, -1)
-            cv2.addWeighted(ov, alpha_gr, frame, 1-alpha_gr, 0, frame)
-
-    cv2.circle(frame, (icon_cx, icon_cy), 13, icon_bg, -1, cv2.LINE_AA)
-    cv2.circle(frame, (icon_cx, icon_cy), 13, icon_border, 1, cv2.LINE_AA)
-
-    # Letra del icono
-    (iw, ih), _ = cv2.getTextSize(icon_char, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 2)
-    cv2.putText(frame, icon_char,
-                (icon_cx - iw//2, icon_cy + ih//2),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.50, icon_text_col, 2, cv2.LINE_AA)
-
-    # -- 6. Texto del boton - blanco con sombra para legibilidad ----
-    txt_x = x1 + 48
-    txt_y = (y1 + y2) // 2 + 6
-
-    # Sombra del texto
-    cv2.putText(frame, label, (txt_x+1, txt_y+1),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 0), 2, cv2.LINE_AA)
-    # Texto principal blanco
-    cv2.putText(frame, label, (txt_x, txt_y),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-
-    # Texto brillante (acento) si activo
-    if is_active or is_hover:
-        bright_label = label
-        text_col_bright = tuple(min(255, int(accent_color[c] * 1.4)) for c in range(3))
-        cv2.putText(frame, bright_label, (txt_x, txt_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, text_col_bright, 1, cv2.LINE_AA)
-
-    # -- 7. Barra de progreso hover ---------------------------------
-    if is_hover and hover_progress > 0:
-        bar_h = 4
-        bar_w = int(W * hover_progress)
-        bar_y1 = y2 - bar_h
-        # Barra de fondo
-        cv2.rectangle(frame, (x1+r, bar_y1), (x2-r, y2), (40,40,50), -1)
-        # Barra de progreso con gradiente
-        if bar_w > 2:
-            for bx in range(bar_w):
-                t_bx = bx / max(bar_w-1, 1)
-                col_bx = _lerp_color(accent_color, (255,255,255), t_bx * 0.4)
-                fx = x1 + r + bx
-                if fx < x2 - r:
-                    frame[bar_y1:y2, fx:fx+1] = col_bx
-        # Brillo en el extremo de la barra
-        if bar_w > 4:
-            tip_x = x1 + r + bar_w - 1
-            if tip_x < x2 - r:
-                ov = frame.copy()
-                cv2.line(ov, (tip_x, bar_y1), (tip_x, y2), (255,255,255), 2)
-                cv2.addWeighted(ov, 0.6, frame, 0.4, 0, frame)
-
-    # -- 8. Punto de estado (esquina superior derecha) ---------------
-    if is_active:
-        dot_x, dot_y = x2 - 8, y1 + 8
-        pulse2 = 0.5 + 0.5 * math.sin(t * 5.0)
-        dot_r  = int(4 + pulse2 * 2)
-        ov = frame.copy()
-        cv2.circle(ov, (dot_x, dot_y), dot_r + 3, accent_color, -1, cv2.LINE_AA)
-        cv2.addWeighted(ov, 0.3, frame, 0.7, 0, frame)
-        cv2.circle(frame, (dot_x, dot_y), dot_r, (255, 255, 255), -1, cv2.LINE_AA)
-        cv2.circle(frame, (dot_x, dot_y), dot_r, accent_color, 1, cv2.LINE_AA)
-
+    return tuple(int(c1[i]*(1-t)+c2[i]*t) for i in range(3))
 
 def _fill_rounded(img, x1, y1, x2, y2, r, color):
-    """Rellena rectangulo con esquinas redondeadas."""
-    cv2.rectangle(img, (x1+r, y1), (x2-r, y2), color, -1)
-    cv2.rectangle(img, (x1, y1+r), (x2, y2-r), color, -1)
-    for cx2, cy2 in [(x1+r, y1+r), (x2-r, y1+r), (x1+r, y2-r), (x2-r, y2-r)]:
-        cv2.circle(img, (cx2, cy2), r, color, -1)
-
+    cv2.rectangle(img,(x1+r,y1),(x2-r,y2),color,-1)
+    cv2.rectangle(img,(x1,y1+r),(x2,y2-r),color,-1)
+    for cx,cy in [(x1+r,y1+r),(x2-r,y1+r),(x1+r,y2-r),(x2-r,y2-r)]:
+        cv2.circle(img,(cx,cy),r,color,-1)
 
 def _stroke_rounded(img, x1, y1, x2, y2, r, color, thickness):
-    """Borde de rectangulo con esquinas redondeadas."""
-    r = max(r, 1)
-    cv2.line(img, (x1+r, y1), (x2-r, y1), color, thickness)
-    cv2.line(img, (x1+r, y2), (x2-r, y2), color, thickness)
-    cv2.line(img, (x1, y1+r), (x1, y2-r), color, thickness)
-    cv2.line(img, (x2, y1+r), (x2, y2-r), color, thickness)
-    cv2.ellipse(img, (x1+r, y1+r), (r,r), 180, 0, 90,  color, thickness)
-    cv2.ellipse(img, (x2-r, y1+r), (r,r), 270, 0, 90,  color, thickness)
-    cv2.ellipse(img, (x2-r, y2-r), (r,r), 0,   0, 90,  color, thickness)
-    cv2.ellipse(img, (x1+r, y2-r), (r,r), 90,  0, 90,  color, thickness)
+    r = max(r,1)
+    cv2.line(img,(x1+r,y1),(x2-r,y1),color,thickness)
+    cv2.line(img,(x1+r,y2),(x2-r,y2),color,thickness)
+    cv2.line(img,(x1,y1+r),(x1,y2-r),color,thickness)
+    cv2.line(img,(x2,y1+r),(x2,y2-r),color,thickness)
+    cv2.ellipse(img,(x1+r,y1+r),(r,r),180,0,90,color,thickness)
+    cv2.ellipse(img,(x2-r,y1+r),(r,r),270,0,90,color,thickness)
+    cv2.ellipse(img,(x2-r,y2-r),(r,r),0,  0,90,color,thickness)
+    cv2.ellipse(img,(x1+r,y2-r),(r,r),90, 0,90,color,thickness)
 
+def draw_rounded_rect(img,x1,y1,x2,y2,r,color,thickness=-1):
+    if thickness==-1: _fill_rounded(img,x1,y1,x2,y2,r,color)
+    else:             _stroke_rounded(img,x1,y1,x2,y2,r,color,thickness)
 
-# =============================================================
-#  SIDEBAR GLASSMORPHISM
-# =============================================================
-def draw_glass_sidebar(frame, x_start, width, height, accent_top, accent_bot, t):
-    """Panel lateral con degradado celeste-dorado calido y textura sutil."""
-    # Degradado vertical vectorizado:
-    # Arriba: celeste suave (180, 220, 255) BGR
-    # Medio:  azul-verde agua (160, 210, 220)
-    # Abajo:  dorado calido suave (120, 200, 240) con toque amarillo
-    y_idx = np.arange(height, dtype=np.float32) / height
-    # Canal B: 180 -> 140
-    b_ch = (180*(1-y_idx) + 140*y_idx).astype(np.uint8)
-    # Canal G: 220 -> 210  (aqua-amarillo)
-    g_ch = (220*(1-y_idx) + 215*y_idx).astype(np.uint8)
-    # Canal R: 255 -> 235  (celeste arriba, ligeramente dorado abajo)
-    r_ch = (255*(1-y_idx) + 235*y_idx).astype(np.uint8)
-
-    # Escribir los tres canales de golpe
-    frame[:height, x_start:x_start+width, 0] = b_ch[:, np.newaxis]
-    frame[:height, x_start:x_start+width, 1] = g_ch[:, np.newaxis]
-    frame[:height, x_start:x_start+width, 2] = r_ch[:, np.newaxis]
-
-    # Trama de puntos perlados (color blanco-dorado suave)
-    dot_spacing = 14
-    for dy in range(0, height, dot_spacing):
-        for dx in range(4, width, dot_spacing):
-            px, py = x_start + dx, dy
-            if 0 <= py < height and 0 <= px < frame.shape[1]:
-                cv2.circle(frame, (px, py), 1, (160, 220, 240), -1)
-
-    # Linea de brillo superior dorada suave
-    cv2.line(frame, (x_start, 0), (x_start+width, 0), (140, 210, 255), 2)
-    # Franja de acento superior (2px amarillo-celeste)
-    cv2.line(frame, (x_start, 2), (x_start+width, 2), (100, 220, 255), 1)
-
-
-def draw_glass_border(frame, x, y1, y2, color, side='left'):
-    """Linea divisoria neon entre sidebar y canvas."""
-    # Glow multicapa
-    for gw in [5, 3, 1]:
-        alpha = 0.08 * (6 - gw)
-        ov = frame.copy()
-        cv2.line(ov, (x, y1), (x, y2), color, gw)
-        cv2.addWeighted(ov, alpha, frame, 1-alpha, 0, frame)
-    cv2.line(frame, (x, y1), (x, y2), color, 1)
-
-
-# =============================================================
-#  HELPERS GENERALES
-# =============================================================
-def draw_rounded_rect(img, x1, y1, x2, y2, r, color, thickness=-1):
-    if thickness == -1:
-        _fill_rounded(img, x1, y1, x2, y2, r, color)
-    else:
-        _stroke_rounded(img, x1, y1, x2, y2, r, color, thickness)
-
-
-def draw_glow_circle(img, cx, cy, r, color, intensity=0.6):
-    for i in range(4, 0, -1):
-        alpha  = intensity * (i/4) * 0.3
-        glow_r = r + i * 3
-        ov = img.copy()
-        cv2.circle(ov, (cx, cy), glow_r, color, -1)
-        cv2.addWeighted(ov, alpha, img, 1-alpha, 0, img)
-    cv2.circle(img, (cx, cy), r, color, -1)
-
-
-def draw_neon_border(img, x1, y1, x2, y2, color, thickness=2, glow=True):
+def draw_neon_border(img,x1,y1,x2,y2,color,thickness=2,glow=True):
+    # Glow simplificado: solo 1 capa en lugar de 3, sin frame.copy()
     if glow:
-        for i in range(3, 0, -1):
-            alpha = 0.12 * i
-            ov = img.copy()
-            cv2.rectangle(ov, (x1-i, y1-i), (x2+i, y2+i), color, thickness)
-            cv2.addWeighted(ov, alpha, img, 1-alpha, 0, img)
-    cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
+        dim = tuple(max(0,int(c*0.4)) for c in color)
+        cv2.rectangle(img,(x1-2,y1-2),(x2+2,y2+2),dim,thickness)
+    cv2.rectangle(img,(x1,y1),(x2,y2),color,thickness)
 
-
-def put_text_centered(img, text, cx, cy, font_scale, color, thickness=1):
-    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-    cv2.putText(img, text, (cx-tw//2, cy+th//2),
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness, cv2.LINE_AA)
-
+def put_text_centered(img,text,cx,cy,font_scale,color,thickness=1):
+    (tw,th),_=cv2.getTextSize(text,cv2.FONT_HERSHEY_SIMPLEX,font_scale,thickness)
+    cv2.putText(img,text,(cx-tw//2,cy+th//2),cv2.FONT_HERSHEY_SIMPLEX,font_scale,color,thickness,cv2.LINE_AA)
 
 _gradient_cache = {}
-def draw_gradient_bar(img, x1, y1, x2, y2, color_left, color_right):
-    w = x2 - x1
-    key = (w, color_left, color_right)
+def draw_gradient_bar(img,x1,y1,x2,y2,color_left,color_right):
+    w = x2-x1
+    key = (w,color_left,color_right)
     if key not in _gradient_cache:
-        gradient = np.zeros((1, w, 3), dtype=np.uint8)
+        grad = np.zeros((1,w,3),dtype=np.uint8)
         for i in range(w):
-            t2 = i / max(w-1, 1)
-            gradient[0, i] = tuple(int(color_left[j]*(1-t2)+color_right[j]*t2) for j in range(3))
-        _gradient_cache[key] = gradient
-    img[y1:y2, x1:x2] = _gradient_cache[key]
+            t2 = i/max(w-1,1)
+            grad[0,i] = tuple(int(color_left[j]*(1-t2)+color_right[j]*t2) for j in range(3))
+        _gradient_cache[key] = grad
+    img[y1:y2,x1:x2] = _gradient_cache[key]
+
+def draw_glow_circle_fast(img, cx, cy, r, color, intensity=0.5):
+    """Glow sin frame.copy(): dibuja circulos concentricos con alpha manual."""
+    # Version ligera: 2 capas con color mas oscuro, sin copy
+    dim1 = tuple(max(0,int(c*0.25)) for c in color)
+    dim2 = tuple(max(0,int(c*0.45)) for c in color)
+    cv2.circle(img,(cx,cy),r+8,dim1,-1,cv2.LINE_AA)
+    cv2.circle(img,(cx,cy),r+4,dim2,-1,cv2.LINE_AA)
+    cv2.circle(img,(cx,cy),r,color,-1,cv2.LINE_AA)
+
+def draw_glass_border_fast(frame, x, y1, y2, color):
+    """Borde neon sin frame.copy(): solo 2 lineas."""
+    dim = tuple(max(0,int(c*0.3)) for c in color)
+    cv2.line(frame,(x-1,y1),(x-1,y2),dim,3)
+    cv2.line(frame,(x,y1),(x,y2),color,1)
+
+
+# =============================================================
+#  BOTON GLASSMORPHISM - VERSION OPTIMIZADA (0 frame.copy())
+# =============================================================
+def draw_glass_button_fast(frame, x1, y1, x2, y2,
+                           label, icon_char, accent_color,
+                           is_active=False, is_hover=False,
+                           hover_progress=0.0, t=0.0):
+    W = x2-x1; H = y2-y1; r = 10
+
+    # 1. Fondo
+    bg_base = (18,14,22)
+    if is_active:   bg = _lerp_color(bg_base, accent_color, 0.22)
+    elif is_hover:  bg = _lerp_color(bg_base, accent_color, 0.14)
+    else:           bg = _lerp_color(bg_base, accent_color, 0.06)
+    _fill_rounded(frame,x1,y1,x2,y2,r,bg)
+
+    # 2. Degradado interno (solo mitad superior, sin copy)
+    mid = y1 + H//2
+    bright = tuple(min(255,int(bg[c]+20)) for c in range(3))
+    _fill_rounded(frame,x1,y1,x2,mid,r,bright)
+    _fill_rounded(frame,x1,y1+r,x2,mid,0,bg)  # corregir zona media
+    # linea de brillo superior - directo
+    cv2.line(frame,(x1+r+2,y1+2),(x2-r-2,y1+2),(200,200,210),1)
+
+    # 3. Borde neon (sin glow pesado, solo borde + sombra directa)
+    if is_active:
+        pulse = 0.75 + 0.25*math.sin(t*4.0)
+        bcol  = tuple(min(255,int(accent_color[c]*pulse)) for c in range(3))
+        # glow ligero: 1 rect exterior oscuro
+        dim = tuple(max(0,int(accent_color[c]*0.3)) for c in range(3))
+        _stroke_rounded(frame,x1-2,y1-2,x2+2,y2+2,r+2,dim,2)
+        _stroke_rounded(frame,x1,y1,x2,y2,r,bcol,2)
+    elif is_hover:
+        dim = tuple(max(0,int(accent_color[c]*0.35)) for c in range(3))
+        _stroke_rounded(frame,x1-1,y1-1,x2+1,y2+1,r+1,dim,2)
+        _stroke_rounded(frame,x1,y1,x2,y2,r,accent_color,2)
+    else:
+        bcol = tuple(max(0,int(c*0.55)) for c in accent_color)
+        _stroke_rounded(frame,x1,y1,x2,y2,r,bcol,1)
+
+    # 4. Icono circular
+    icon_cx = x1+26; icon_cy = (y1+y2)//2
+    if is_active:
+        # glow del icono sin copy: circulo oscuro + circulo brillante
+        dim_icon = tuple(max(0,int(c*0.3)) for c in accent_color)
+        cv2.circle(frame,(icon_cx,icon_cy),16,dim_icon,-1,cv2.LINE_AA)
+        cv2.circle(frame,(icon_cx,icon_cy),13,accent_color,-1,cv2.LINE_AA)
+        cv2.circle(frame,(icon_cx,icon_cy),13,(255,255,255),1,cv2.LINE_AA)
+        icon_text_col = (10,10,10)
+    elif is_hover:
+        icon_bg = _lerp_color(accent_color,(255,255,255),0.2)
+        cv2.circle(frame,(icon_cx,icon_cy),13,icon_bg,-1,cv2.LINE_AA)
+        cv2.circle(frame,(icon_cx,icon_cy),13,(255,255,255),1,cv2.LINE_AA)
+        icon_text_col = (10,10,10)
+    else:
+        icon_bg = tuple(max(0,int(c*0.45)) for c in accent_color)
+        cv2.circle(frame,(icon_cx,icon_cy),13,icon_bg,-1,cv2.LINE_AA)
+        cv2.circle(frame,(icon_cx,icon_cy),13,accent_color,1,cv2.LINE_AA)
+        icon_text_col = (255,255,255)
+
+    (iw,ih),_ = cv2.getTextSize(icon_char,cv2.FONT_HERSHEY_SIMPLEX,0.50,2)
+    cv2.putText(frame,icon_char,(icon_cx-iw//2,icon_cy+ih//2),
+                cv2.FONT_HERSHEY_SIMPLEX,0.50,icon_text_col,2,cv2.LINE_AA)
+
+    # 5. Texto con sombra directa (sin copy)
+    txt_x = x1+48; txt_y = (y1+y2)//2+6
+    cv2.putText(frame,label,(txt_x+1,txt_y+1),cv2.FONT_HERSHEY_SIMPLEX,0.48,(0,0,0),2,cv2.LINE_AA)
+    if is_active or is_hover:
+        tcol = tuple(min(255,int(accent_color[c]*1.4)) for c in range(3))
+    else:
+        tcol = (255,255,255)
+    cv2.putText(frame,label,(txt_x,txt_y),cv2.FONT_HERSHEY_SIMPLEX,0.48,tcol,1,cv2.LINE_AA)
+
+    # 6. Barra de progreso hover (simplificada)
+    if is_hover and hover_progress > 0:
+        bar_y = y2-4; bar_w = int(W*hover_progress)
+        cv2.rectangle(frame,(x1+r,bar_y),(x2-r,y2),(40,40,50),-1)
+        if bar_w > 2:
+            cv2.rectangle(frame,(x1+r,bar_y),(x1+r+bar_w,y2),accent_color,-1)
+
+    # 7. Punto de estado activo
+    if is_active:
+        dot_x,dot_y = x2-8,y1+8
+        pulse2 = 0.5+0.5*math.sin(t*5.0)
+        dot_r  = int(4+pulse2*2)
+        dim_dot = tuple(max(0,int(c*0.4)) for c in accent_color)
+        cv2.circle(frame,(dot_x,dot_y),dot_r+2,dim_dot,-1,cv2.LINE_AA)
+        cv2.circle(frame,(dot_x,dot_y),dot_r,(255,255,255),-1,cv2.LINE_AA)
+        cv2.circle(frame,(dot_x,dot_y),dot_r,accent_color,1,cv2.LINE_AA)
 
 
 # =============================================================
 #  FLOOD FILL
 # =============================================================
-def flood_fill(image, seed_pt, fill_color, tolerance):
-    x, y = seed_pt
-    h, w = image.shape[:2]
-    if not (0 <= x < w and 0 <= y < h): return image
-    result = image.copy()
-    mask   = np.zeros((h+2, w+2), dtype=np.uint8)
-    lo = hi = (tolerance, tolerance, tolerance)
-    cv2.floodFill(result, mask, (x,y), fill_color, lo, hi, 8|cv2.FLOODFILL_FIXED_RANGE)
+def flood_fill(image,seed_pt,fill_color,tolerance):
+    x,y=seed_pt; h,w=image.shape[:2]
+    if not (0<=x<w and 0<=y<h): return image
+    result=image.copy()
+    mask=np.zeros((h+2,w+2),dtype=np.uint8)
+    lo=hi=(tolerance,tolerance,tolerance)
+    cv2.floodFill(result,mask,(x,y),fill_color,lo,hi,8|cv2.FLOODFILL_FIXED_RANGE)
     return result
 
-def flood_fill_smooth(image, seed_pt, fill_color, tolerance):
-    filled    = flood_fill(image, seed_pt, fill_color, tolerance)
-    diff      = cv2.absdiff(image, filled)
-    _, changed= cv2.threshold(cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY), 1, 255, cv2.THRESH_BINARY)
-    kernel    = np.ones((3,3), np.uint8)
-    border    = cv2.dilate(changed, kernel, iterations=2) - changed
-    blurred   = cv2.GaussianBlur(filled, (3,3), 0)
-    mask_border = cv2.cvtColor(border, cv2.COLOR_GRAY2BGR) > 0
-    return np.where(mask_border, blurred, filled).astype(np.uint8)
+def flood_fill_smooth(image,seed_pt,fill_color,tolerance):
+    filled=flood_fill(image,seed_pt,fill_color,tolerance)
+    diff=cv2.absdiff(image,filled)
+    _,changed=cv2.threshold(cv2.cvtColor(diff,cv2.COLOR_BGR2GRAY),1,255,cv2.THRESH_BINARY)
+    kernel=np.ones((3,3),np.uint8)
+    border=cv2.dilate(changed,kernel,iterations=2)-changed
+    blurred=cv2.GaussianBlur(filled,(3,3),0)
+    mask_border=cv2.cvtColor(border,cv2.COLOR_GRAY2BGR)>0
+    return np.where(mask_border,blurred,filled).astype(np.uint8)
 
 
 # =============================================================
-#  CONTROLADOR DE MOUSE
+#  MOUSE CONTROLLER
 # =============================================================
 class MouseController:
-    __slots__ = ('cfg','cam_w','cam_h','scr_w','scr_h','_sx','_sy',
-                 '_alpha','is_dragging','mouse_down','_was_pinching',
-                 'drag_start_pos','_pinch_frames','_click_cd','_rclick_cd',
-                 '_dclick_cd','_pos_history','_last_pinch_t','_dclick_window')
-
-    def __init__(self, cfg, cam_w, cam_h):
-        self.cfg = cfg
-        self.cam_w = cam_w; self.cam_h = cam_h
-        self.scr_w, self.scr_h = (pyautogui.size() if PYAUTOGUI_OK else (1920,1080))
-        self._sx = self._sy = None
-        self._alpha = 1.0 / max(cfg["mouse_smoothing"], 1)
-        self.is_dragging = self.mouse_down = self._was_pinching = False
-        self.drag_start_pos = None
-        self._pinch_frames = 0
-        self._click_cd = self._rclick_cd = self._dclick_cd = 0
-        self._pos_history = deque(maxlen=5)
-        self._last_pinch_t = 0.0
-        self._dclick_window = 0.4
-
+    __slots__=('cfg','cam_w','cam_h','scr_w','scr_h','_sx','_sy',
+               '_alpha','is_dragging','mouse_down','_was_pinching',
+               'drag_start_pos','_pinch_frames','_click_cd','_rclick_cd',
+               '_dclick_cd','_pos_history','_last_pinch_t','_dclick_window')
+    def __init__(self,cfg,cam_w,cam_h):
+        self.cfg=cfg; self.cam_w=cam_w; self.cam_h=cam_h
+        self.scr_w,self.scr_h=(pyautogui.size() if PYAUTOGUI_OK else (1920,1080))
+        self._sx=self._sy=None
+        self._alpha=1.0/max(cfg["mouse_smoothing"],1)
+        self.is_dragging=self.mouse_down=self._was_pinching=False
+        self.drag_start_pos=None; self._pinch_frames=0
+        self._click_cd=self._rclick_cd=self._dclick_cd=0
+        self._pos_history=deque(maxlen=5); self._last_pinch_t=0.0; self._dclick_window=0.4
     def tick(self):
-        for attr in ('_click_cd','_rclick_cd','_dclick_cd'):
-            v = getattr(self, attr)
-            if v > 0: setattr(self, attr, v-1)
-
-    def cam_to_screen(self, cx, cy):
-        mg = self.cfg["mouse_zone_margin"]
-        nx = float(np.clip((cx/self.cam_w-mg)/(1-2*mg),0,1))
-        ny = float(np.clip((cy/self.cam_h-mg)/(1-2*mg),0,1))
-        return int(nx*self.scr_w), int(ny*self.scr_h)
-
-    def smooth_move(self, cx, cy):
+        for attr in('_click_cd','_rclick_cd','_dclick_cd'):
+            v=getattr(self,attr)
+            if v>0: setattr(self,attr,v-1)
+    def cam_to_screen(self,cx,cy):
+        mg=self.cfg["mouse_zone_margin"]
+        nx=float(np.clip((cx/self.cam_w-mg)/(1-2*mg),0,1))
+        ny=float(np.clip((cy/self.cam_h-mg)/(1-2*mg),0,1))
+        return int(nx*self.scr_w),int(ny*self.scr_h)
+    def smooth_move(self,cx,cy):
         if not PYAUTOGUI_OK: return
-        sx, sy = self.cam_to_screen(cx, cy)
-        if self._sx is None: self._sx, self._sy = float(sx), float(sy)
+        sx,sy=self.cam_to_screen(cx,cy)
+        if self._sx is None: self._sx,self._sy=float(sx),float(sy)
         else:
-            a = self._alpha
-            self._sx = a*sx + (1-a)*self._sx
-            self._sy = a*sy + (1-a)*self._sy
-        self._pos_history.append((int(self._sx), int(self._sy)))
+            a=self._alpha
+            self._sx=a*sx+(1-a)*self._sx; self._sy=a*sy+(1-a)*self._sy
+        self._pos_history.append((int(self._sx),int(self._sy)))
         if self.is_dragging: pyautogui.dragTo(int(self._sx),int(self._sy),button='left',_pause=False)
         else:                pyautogui.moveTo(int(self._sx),int(self._sy),_pause=False)
-
-    def handle_pinch(self, is_pinching, cx, cy):
+    def handle_pinch(self,is_pinching,cx,cy):
         if not PYAUTOGUI_OK: return ""
-        action = ""; now = time.time()
+        action=""; now=time.time()
         if is_pinching:
-            self._pinch_frames += 1
+            self._pinch_frames+=1
             if not self._was_pinching:
-                if (self._click_cd==0 and self._dclick_cd==0 and
-                        now-self._last_pinch_t < self._dclick_window):
+                if(self._click_cd==0 and self._dclick_cd==0 and
+                        now-self._last_pinch_t<self._dclick_window):
                     pyautogui.doubleClick(_pause=False)
-                    self._dclick_cd = self.cfg["double_click_cooldown"]
-                    self._click_cd  = self.cfg["click_cooldown_frames"]
-                    self.is_dragging = False; action = "DOBLE CLIC"
-                elif self._click_cd == 0:
+                    self._dclick_cd=self.cfg["double_click_cooldown"]
+                    self._click_cd=self.cfg["click_cooldown_frames"]
+                    self.is_dragging=False; action="DOBLE CLIC"
+                elif self._click_cd==0:
                     pyautogui.mouseDown(button='left',_pause=False)
-                    self.mouse_down = True
-                    self.drag_start_pos = (int(self._sx or cx),int(self._sy or cy))
-                    action = "CLIC IZQUIERDO"
-                self._last_pinch_t = now
+                    self.mouse_down=True
+                    self.drag_start_pos=(int(self._sx or cx),int(self._sy or cy))
+                    action="CLIC IZQ"
+                self._last_pinch_t=now
             else:
-                if (self.mouse_down and not self.is_dragging and
+                if(self.mouse_down and not self.is_dragging and
                         self._pinch_frames>=6 and self.drag_start_pos):
-                    if self._sx and (abs(self._sx-self.drag_start_pos[0])+
-                                      abs(self._sy-self.drag_start_pos[1]))>self.cfg["drag_min_move"]:
-                        self.is_dragging = True; action = "ARRASTRANDO"
-                if self.is_dragging: action = "ARRASTRANDO"
+                    if self._sx and(abs(self._sx-self.drag_start_pos[0])+
+                                     abs(self._sy-self.drag_start_pos[1]))>self.cfg["drag_min_move"]:
+                        self.is_dragging=True; action="ARRASTRANDO"
+                if self.is_dragging: action="ARRASTRANDO"
         else:
             if self._was_pinching:
                 if self.is_dragging or self.mouse_down:
                     pyautogui.mouseUp(button='left',_pause=False)
-                    self.is_dragging = self.mouse_down = False; action = "SOLTADO"
-                self._click_cd = self.cfg["click_cooldown_frames"]
-            self._pinch_frames = 0
-        self._was_pinching = is_pinching
+                    self.is_dragging=self.mouse_down=False; action="SOLTADO"
+                self._click_cd=self.cfg["click_cooldown_frames"]
+            self._pinch_frames=0
+        self._was_pinching=is_pinching
         return action
-
     def right_click(self):
         if not PYAUTOGUI_OK or self._rclick_cd>0: return ""
         if self.is_dragging or self.mouse_down:
             pyautogui.mouseUp(button='left',_pause=False)
-            self.is_dragging = self.mouse_down = False
+            self.is_dragging=self.mouse_down=False
         pyautogui.click(button='right',_pause=False)
-        self._rclick_cd = self.cfg["right_click_cooldown"]
-        return "CLIC DERECHO"
-
+        self._rclick_cd=self.cfg["right_click_cooldown"]; return "CLIC DER"
     def release_all(self):
         if not PYAUTOGUI_OK: return
         if self.mouse_down or self.is_dragging:
             try: pyautogui.mouseUp(button='left',_pause=False)
             except: pass
-        self.is_dragging = self.mouse_down = self._was_pinching = False
-        self._pinch_frames = 0; self._sx = self._sy = None
-
+        self.is_dragging=self.mouse_down=self._was_pinching=False
+        self._pinch_frames=0; self._sx=self._sy=None
     @property
     def screen_pos(self):
         return (int(self._sx),int(self._sy)) if self._sx is not None else None
@@ -642,13 +531,9 @@ class ColorPicker:
         {"name":"Piel Morena","bgr":(80,110,140)},{"name":"Piel Oscura","bgr":(50,70,100)},
         {"name":"Piel Muy Osc.","bgr":(30,50,70)},{"name":"Cafe","bgr":(25,40,65)},
     ]
-
-    def __init__(self):
-        self.colors=self.EXTENDED_COLORS; self.selected=0
-
+    def __init__(self): self.colors=self.EXTENDED_COLORS; self.selected=0
     def _build_grid(self,W,H):
-        canvas=np.full((H,W,3),self.BG_COLOR,dtype=np.uint8)
-        mg=20; n=len(self.colors)
+        canvas=np.full((H,W,3),self.BG_COLOR,dtype=np.uint8); mg=20; n=len(self.colors)
         cv2.rectangle(canvas,(0,0),(W,70),(255,240,210),-1)
         cv2.putText(canvas,"SELECCIONA UN COLOR",(mg,40),cv2.FONT_HERSHEY_SIMPLEX,0.9,(60,120,255),2,cv2.LINE_AA)
         cv2.putText(canvas,"Flechas/WASD  |  ENTER seleccionar  |  ESC cancelar",(mg,65),cv2.FONT_HERSHEY_SIMPLEX,0.48,(120,90,60),1,cv2.LINE_AA)
@@ -656,10 +541,6 @@ class ColorPicker:
             row=i//self.COLS; col=i%self.COLS
             x=mg+col*(self.SWATCH_W+12); y=90+row*(self.SWATCH_H+30)
             if i==self.selected:
-                for ex in [4,3,2]:
-                    ov=canvas.copy()
-                    cv2.rectangle(ov,(x-6-ex,y-6-ex),(x+self.SWATCH_W+6+ex,y+self.SWATCH_H+6+ex),self.SEL_COLOR,2)
-                    cv2.addWeighted(ov,0.1*(4-ex),canvas,1-0.1*(4-ex),0,canvas)
                 cv2.rectangle(canvas,(x-6,y-6),(x+self.SWATCH_W+6,y+self.SWATCH_H+6),self.SEL_COLOR,3)
             else:
                 cv2.rectangle(canvas,(x-2,y-2),(x+self.SWATCH_W+2,y+self.SWATCH_H+2),(200,180,150),1)
@@ -671,7 +552,6 @@ class ColorPicker:
         cv2.rectangle(canvas,(0,H-35),(W,H),(255,240,210),-1)
         cv2.putText(canvas,f"{n} colores disponibles",(mg,H-12),cv2.FONT_HERSHEY_SIMPLEX,0.45,(120,90,60),1,cv2.LINE_AA)
         return canvas
-
     def show(self,W=1280,H=720):
         win="Selector de Color"
         cv2.namedWindow(win,cv2.WINDOW_NORMAL); cv2.resizeWindow(win,W,H)
@@ -691,11 +571,9 @@ class ColorPicker:
 # =============================================================
 class ImageSelector:
     THUMB_W=210; THUMB_H=158; COLS=5
-
     def __init__(self,images_dir,extensions):
         self.images_dir=images_dir; self.extensions=extensions
         self.image_paths=[]; self.thumbnails=[]; self.selected=0; self._load()
-
     def _load(self):
         self.image_paths=[]
         for ext in self.extensions:
@@ -709,13 +587,13 @@ class ImageSelector:
                 th=np.full((self.THUMB_H,self.THUMB_W,3),230,dtype=np.uint8)
                 put_text_centered(th,"?",self.THUMB_W//2,self.THUMB_H//2,1.5,(150,100,60),3)
             self.thumbnails.append(th)
-
     def _build_grid(self,W,H):
         bg=np.zeros((H,W,3),dtype=np.uint8)
-        for y in range(H):
-            t=y/H
-            bg[y,:]=( int(255*(1-t)+230*t), int(210*(1-t)+245*t), int(135*(1-t)+255*t) )
-        draw_clouds(bg,time.time())
+        y_idx=np.arange(H,dtype=np.float32)/H
+        bg[:,:,0]=(255*(1-y_idx)+230*y_idx).astype(np.uint8)[:,np.newaxis]
+        bg[:,:,1]=(210*(1-y_idx)+245*y_idx).astype(np.uint8)[:,np.newaxis]
+        bg[:,:,2]=(135*(1-y_idx)+255*y_idx).astype(np.uint8)[:,np.newaxis]
+        draw_clouds_fast(bg,time.time())
         cv2.rectangle(bg,(0,0),(W,85),(255,249,230),-1)
         draw_gradient_bar(bg,0,82,W,85,UI["vivo_cyan"],UI["vivo_rosa"])
         put_text_centered(bg,"SELECCIONA UNA IMAGEN PARA COLOREAR",W//2,32,0.9,(60,120,255),2)
@@ -739,7 +617,6 @@ class ImageSelector:
         cv2.rectangle(bg,(0,H-38),(W,H),(255,249,230),-1)
         put_text_centered(bg,f"[R] Recargar  |  {len(self.image_paths)} imagen(es)",W//2,H-19,0.44,UI["text_claro"],1)
         return bg
-
     def show(self,W=1280,H=720):
         win="Magic Paint - Seleccionar Imagen"
         cv2.namedWindow(win,cv2.WINDOW_NORMAL); cv2.resizeWindow(win,W,H)
@@ -770,19 +647,18 @@ class VirtualPainter:
         def reset(self,W,H):
             self.x=float(np.random.randint(0,W)); self.y=float(np.random.randint(0,H))
             self.vx=float(np.random.uniform(-1.2,1.2)); self.vy=float(np.random.uniform(-2.0,-0.4))
-            self.r=int(np.random.randint(2,6))
+            self.r=int(np.random.randint(2,5))
             colors=[UI["vivo_cyan"],UI["vivo_verde"],UI["vivo_rosa"],
                     UI["vivo_naranja"],UI["vivo_amarillo"],UI["vivo_morado"]]
             self.col=colors[np.random.randint(0,len(colors))]
-            self.life=int(np.random.randint(60,180)); self.age=0; self.W=W; self.H=H
+            self.life=int(np.random.randint(60,150)); self.age=0; self.W=W; self.H=H
         def update(self):
             self.x+=self.vx; self.y+=self.vy; self.vy+=0.04; self.age+=1
             if self.age>self.life or self.y>self.H+10 or self.x<0 or self.x>self.W:
                 self.reset(self.W,self.H)
         def draw(self,frame):
             if self.age>=self.life: return
-            alpha=1.0-self.age/self.life
-            r=max(1,int(self.r*alpha))
+            r=max(1,int(self.r*(1.0-self.age/self.life)))
             cv2.circle(frame,(int(self.x),int(self.y)),r,self.col,-1,cv2.LINE_AA)
 
     def __init__(self):
@@ -806,12 +682,19 @@ class VirtualPainter:
         self._hover_btn=None; self._hover_btn_frames=0
         self._hover_btn_thr=20; self._btn_hover_progress=0
         self._notif=""; self._notif_timer=0; self._notif_color=UI["vivo_verde"]
-        self._trail=deque(maxlen=20); self._paint_splashes=[]
+        self._paint_splashes=[]
         self._particles=[self.Particle(self.W,self.H) for _ in range(self.cfg["particle_count"])]
         self._fps_buf=deque(maxlen=30); self._last_t=time.time()
         self._frame_counter=0; self._last_landmarks=None
         self._last_gesture="NONE"; self._hand_present=False
-        self._free_bg_cache=None; self._free_bg_frame_cnt=-1; self._free_bg_interval=3
+        self._free_bg_cache=None; self._free_bg_frame_cnt=-1; self._free_bg_interval=4
+        # Cache del fondo cielo vectorizado
+        self._sky_base=None
+        self._cloud_frame_cnt=-1
+        self._cloud_interval=self.cfg["cloud_redraw_interval"]
+        self._sky_with_clouds=None
+        # Cache de blobs de pintura (poligonos pre-calculados)
+        self._blob_cache={}; self._blob_t_last=-99
         self.mouse_ctrl=MouseController(self.cfg,self.W,self.H)
         self._mouse_action=""; self._mouse_action_t=0
         self._upec_logo=None
@@ -830,13 +713,12 @@ class VirtualPainter:
         os.makedirs(self.cfg["save_dir"],exist_ok=True)
         self.img_selector=ImageSelector(self.cfg["images_dir"],self.cfg["image_extensions"])
         self._build_ui()
-        self._static_ui_cache={}; self._ui_update_counter=0
+        self._ui_update_counter=0
+        # Pre-construir sidebar cache al inicio
+        _build_sidebar_strip(self.SIDEBAR_W, self.H)
 
     def _notify(self,msg,color=None,dur=90):
         self._notif=msg; self._notif_timer=dur; self._notif_color=color or UI["vivo_verde"]
-
-    def _set_mouse_action(self,a,dur=35):
-        if a: self._mouse_action=a; self._mouse_action_t=dur
 
     def _get_layer(self):
         if self.app_mode==APP_MODE_COLOR and self.color_layer is not None: return self.color_layer
@@ -891,7 +773,7 @@ class VirtualPainter:
             cv2.imwrite(path,save_img)
         elif frame_bg is not None:
             path=os.path.join(self.cfg["save_dir"],f"painting_{ts}.{ext}")
-            cv2.imwrite(path,self._merge_canvas(frame_bg))
+            cv2.imwrite(path,self._merge_canvas_fast(frame_bg))
         else:
             path=os.path.join(self.cfg["save_dir"],f"canvas_{ts}.{ext}")
             cv2.imwrite(path,self.canvas)
@@ -901,7 +783,8 @@ class VirtualPainter:
         if self.app_mode==APP_MODE_COLOR and self.color_layer is not None:
             art=self.color_layer[:,self.SIDEBAR_W:self.W-self.SIDEBAR_W].copy()
         elif frame_bg is not None:
-            merged=self._merge_canvas(frame_bg); art=merged[:,self.SIDEBAR_W:self.W-self.SIDEBAR_W].copy()
+            merged=self._merge_canvas_fast(frame_bg)
+            art=merged[:,self.SIDEBAR_W:self.W-self.SIDEBAR_W].copy()
         else: art=self.canvas.copy()
         PRINT_W=1240; ART_H=900
         art_h_orig,art_w_orig=art.shape[:2]
@@ -930,7 +813,7 @@ class VirtualPainter:
         for title,y,fs,th,col in [
             ("UNIVERSIDAD POLITECNICA ESTATAL DEL CARCHI",55,0.95,2,(0,100,40)),
             ("CARRERA DE COMPUTACION",92,0.75,2,(30,80,30)),
-            ("Feria Tecnologica - Magic Paint con Gestos de Mano",122,0.55,1,(80,80,80))]:
+            ("Feria Agroalimentaria, Tecnologica y Turistica Sostenible UPEC - Pintura con Gestos de Mano",122,0.55,1,(80,80,80))]:
             (tw,_),_=cv2.getTextSize(title,font,fs,th)
             cv2.putText(header,title,(center_x-tw//2,y),font,fs,col,th,cv2.LINE_AA)
         date_str=datetime.now().strftime("%d/%m/%Y  %H:%M")
@@ -979,8 +862,7 @@ class VirtualPainter:
             "PRINT":    (right_x,btn_y(6),right_x+BTN_W,btn_y(6)+BTN_H),
         }
         self.buttons={**self.left_buttons,**self.right_buttons}
-        self.DRAW_X1=self.SIDEBAR_W; self.DRAW_Y1=0
-        self.DRAW_X2=W-self.SIDEBAR_W; self.DRAW_Y2=H
+        self.DRAW_X1=self.SIDEBAR_W; self.DRAW_X2=W-self.SIDEBAR_W
 
     def _fingers_up(self,lm):
         h,w=self.H,self.W
@@ -1029,14 +911,14 @@ class VirtualPainter:
         self._set_layer(layer)
         if not self.prev_point and color!=(0,0,0):
             if len(self._paint_splashes)<self.cfg["max_paint_splashes"]:
-                self._paint_splashes.append([pt[0],pt[1],size+4,color,0,18])
+                self._paint_splashes.append([pt[0],pt[1],size+4,color,0,14])
 
     def _apply_fill(self,pt):
         self._push_undo()
         result=flood_fill_smooth(self._get_layer(),pt,self.current_color,self.fill_tolerance)
         self._set_layer(result)
         if len(self._paint_splashes)<self.cfg["max_paint_splashes"]:
-            self._paint_splashes.append([pt[0],pt[1],30,self.current_color,0,25])
+            self._paint_splashes.append([pt[0],pt[1],25,self.current_color,0,20])
         self._notify(f"Relleno (tol:{self.fill_tolerance})",UI["vivo_naranja"])
 
     def _check_btn_hover(self,pt,frame_bg=None):
@@ -1100,72 +982,94 @@ class VirtualPainter:
         self.mouse_ctrl.smooth_move(index[0],index[1])
         if gesture=="SELECT" and not is_pinching:
             a=self.mouse_ctrl.right_click()
-            if a: self._set_mouse_action(a)
         elif gesture in("DRAW","PINCH") or is_pinching:
-            a=self.mouse_ctrl.handle_pinch(True,index[0],index[1])
-            if a: self._set_mouse_action(a)
+            self.mouse_ctrl.handle_pinch(True,index[0],index[1])
         else:
-            a=self.mouse_ctrl.handle_pinch(False,index[0],index[1])
-            if a: self._set_mouse_action(a)
+            self.mouse_ctrl.handle_pinch(False,index[0],index[1])
         self.mouse_ctrl.tick()
         return {"index":index,"thumb":thumb,"pinch_dist":pinch_dist,
                 "is_pinching":is_pinching,"is_dragging":self.mouse_ctrl.is_dragging}
 
-    def _merge_canvas(self,frame):
-        H,W=frame.shape[:2]
-        sky=np.zeros((H,W,3),dtype=np.uint8)
-        for y in range(H):
-            t=y/H
-            sky[y,:]=(int(255*(1-t)+230*t),int(210*(1-t)+245*t),int(135*(1-t)+255*t))
-        draw_clouds(sky,time.time())
-        op=self.cfg["canvas_opacity"]
+    def _get_sky_base(self):
+        """Fondo cielo vectorizado, construido una sola vez."""
+        if self._sky_base is None:
+            sky = np.zeros((self.H, self.W, 3), dtype=np.uint8)
+            y_idx = np.arange(self.H, dtype=np.float32)/self.H
+            sky[:,:,0] = (255*(1-y_idx)+230*y_idx).astype(np.uint8)[:,np.newaxis]
+            sky[:,:,1] = (210*(1-y_idx)+245*y_idx).astype(np.uint8)[:,np.newaxis]
+            sky[:,:,2] = (135*(1-y_idx)+255*y_idx).astype(np.uint8)[:,np.newaxis]
+            self._sky_base = sky
+        return self._sky_base
+
+    def _merge_canvas_fast(self, frame):
+        """Fondo con nubes cacheadas + canvas: mucho mas rapido."""
+        # Redibujar nubes solo cada N frames
+        if (self._sky_with_clouds is None or
+                self._frame_counter - self._cloud_frame_cnt >= self._cloud_interval):
+            sky = self._get_sky_base().copy()
+            draw_clouds_fast(sky, time.time())
+            self._sky_with_clouds = sky
+            self._cloud_frame_cnt = self._frame_counter
+
+        output = self._sky_with_clouds.copy()
+        op = self.cfg["canvas_opacity"]
         if np.any(self.canvas):
-            mask=(self.canvas.sum(axis=2)>0)
+            mask = (self.canvas.sum(axis=2) > 0)
             if np.any(mask):
-                sky[mask]=cv2.addWeighted(sky[mask],1-op,self.canvas[mask],op,0)
-        return sky
+                # Blend vectorizado sin loops
+                canvas_roi = self.canvas[mask]
+                sky_roi    = output[mask]
+                output[mask] = (sky_roi*(1-op) + canvas_roi*op).astype(np.uint8)
+        return output
 
     def _build_free_bg(self,frame):
-        output=np.zeros((self.H,self.W,3),dtype=np.uint8)
-        y_idx=np.arange(self.H,dtype=np.float32)/self.H
-        output[:,:,0]=(255*(1-y_idx)+230*y_idx).astype(np.uint8)[:,np.newaxis]
-        output[:,:,1]=(210*(1-y_idx)+245*y_idx).astype(np.uint8)[:,np.newaxis]
-        output[:,:,2]=(135*(1-y_idx)+255*y_idx).astype(np.uint8)[:,np.newaxis]
-        draw_clouds(output,time.time())
+        output = self._get_sky_base().copy()
+        draw_clouds_fast(output, time.time())
+        # Blend vectorizado
         cv2.addWeighted(frame,0.25,output,0.75,0,output)
         return output
 
-    def _update_effects(self,frame):
-        for p in self._particles: p.update(); p.draw(frame)
+    def _update_effects_fast(self, frame):
+        """Efectos sin frame.copy(): particulas y splashes directos."""
+        for p in self._particles:
+            p.update(); p.draw(frame)
+
         alive=[]
         for s in self._paint_splashes:
             x,y,r,col,age,max_age=s
             if age<max_age:
-                a=1.0-age/max_age; cr=int(r*(1+age*0.4))
-                ov=frame.copy(); cv2.circle(ov,(x,y),cr,col,-1,cv2.LINE_AA)
-                cv2.addWeighted(ov,a*0.5,frame,1-a*0.5,0,frame)
+                a=1.0-age/max_age
+                cr=max(1,int(r*(1+age*0.3)))
+                # Sin frame.copy(): dibujar directo con color atenuado
+                dim_col = tuple(int(col[c]*a*0.6) for c in range(3))
+                cv2.circle(frame,(x,y),cr,dim_col,-1,cv2.LINE_AA)
                 s[4]+=1; alive.append(s)
         self._paint_splashes=alive
-        for i,(tx,ty,tc) in enumerate(self._trail):
-            if i==0: continue
-            a=(i+1)/len(self._trail); r=max(1,int(a*6))
-            ov=frame.copy(); cv2.circle(ov,(tx,ty),r,tc,-1,cv2.LINE_AA)
-            cv2.addWeighted(ov,a*0.4,frame,1-a*0.4,0,frame)
 
-    def _draw_paint_blobs(self,frame,t):
+    def _draw_paint_blobs_fast(self, frame, t):
+        """Manchas de pintura con cache de poligonos."""
         paint_colors=[(80,107,255),(80,202,254),(80,222,100),(251,219,72),
                       (60,159,255),(245,110,197),(157,107,255),(251,160,80)]
         blob_w=self.SIDEBAR_W//len(paint_colors)
-        for side_x in [0,self.W-self.SIDEBAR_W]:
-            for i,pc in enumerate(paint_colors):
-                bx=side_x+i*blob_w; by=self.H-20
-                wave=int(6*math.sin(t*2.0+i*0.8)); peak=int(4*math.sin(t*2.5+i*1.1))
-                pts=np.array([[bx,self.H],[bx,by+wave],[bx+blob_w//2,by-10+peak],
-                               [bx+blob_w,by+wave],[bx+blob_w,self.H]],dtype=np.int32)
-                cv2.fillPoly(frame,[pts],pc)
+        # Recalcular solo si han pasado suficientes ms (ondas lentas)
+        t_bucket = int(t * 15)  # bucket de ~66ms
+        if t_bucket != self._blob_t_last:
+            self._blob_cache = {}
+            self._blob_t_last = t_bucket
+            for side_x in [0, self.W-self.SIDEBAR_W]:
+                for i,pc in enumerate(paint_colors):
+                    bx=side_x+i*blob_w; by=self.H-20
+                    wave=int(6*math.sin(t*2.0+i*0.8))
+                    peak=int(4*math.sin(t*2.5+i*1.1))
+                    pts=np.array([[bx,self.H],[bx,by+wave],
+                                  [bx+blob_w//2,by-10+peak],
+                                  [bx+blob_w,by+wave],[bx+blob_w,self.H]],dtype=np.int32)
+                    self._blob_cache[(side_x,i)] = (pts, pc)
+        for (pts,pc) in self._blob_cache.values():
+            cv2.fillPoly(frame,[pts],pc)
 
     # ==================================================================
-    #  DRAW UI - NUEVO SISTEMA GLASSMORPHISM
+    #  DRAW UI OPTIMIZADO
     # ==================================================================
     def _draw_ui(self,frame,gesture,fps):
         if not self.show_hud: return frame
@@ -1173,48 +1077,34 @@ class VirtualPainter:
         is_free=(self.app_mode==APP_MODE_FREE)
         t=time.time()
 
-        # -- Sidebars glassmorphism oscuro -----------------------------
-        draw_glass_sidebar(frame, 0,           self.SIDEBAR_W, H, (50,205,50), (0,206,209), t)
-        draw_glass_sidebar(frame, W-self.SIDEBAR_W, self.SIDEBAR_W, H, (255,20,147),(30,144,255), t)
+        # Sidebars - copia O(1) desde cache pre-renderizado
+        draw_glass_sidebar_fast(frame, 0,             self.SIDEBAR_W, H)
+        draw_glass_sidebar_fast(frame, W-self.SIDEBAR_W, self.SIDEBAR_W, H)
 
-        # -- Divisores neon --------------------------------------------
-        border_col = (0,206,209) if not is_free else (251,219,72)  # turquesa o amarillo
-        draw_glass_border(frame, self.SIDEBAR_W,   0, H, border_col, 'left')
-        draw_glass_border(frame, W-self.SIDEBAR_W, 0, H, (255,20,147), 'right')
+        # Bordes neon - sin frame.copy()
+        border_col=(0,206,209) if not is_free else (251,219,72)
+        draw_glass_border_fast(frame, self.SIDEBAR_W,   0, H, border_col)
+        draw_glass_border_fast(frame, W-self.SIDEBAR_W, 0, H, (255,20,147))
 
-        # -- Manchas de pintura animadas -------------------------------
-        self._draw_paint_blobs(frame, t)
+        # Manchas de pintura cacheadas
+        self._draw_paint_blobs_fast(frame, t)
 
-        # -- Header central --------------------------------------------
-        header_h = 52
-        # Fondo oscuro del header
-        header_bg = np.zeros((header_h, W-2*self.SIDEBAR_W, 3), dtype=np.uint8)
-        header_bg[:] = (18, 14, 24)
-        # Linea de brillo superior
-        header_bg[0:2, :] = (80, 60, 100)
-        frame[0:header_h, self.SIDEBAR_W:W-self.SIDEBAR_W] = header_bg
-        # Linea neon inferior del header
-        draw_gradient_bar(frame, self.SIDEBAR_W, header_h-2, W-self.SIDEBAR_W, header_h,
-                          (0,206,209), (255,20,147))
+        # Header central
+        header_h=52
+        frame[0:header_h, self.SIDEBAR_W:W-self.SIDEBAR_W] = (18,14,24)
+        frame[0:2, self.SIDEBAR_W:W-self.SIDEBAR_W] = (80,60,100)
+        draw_gradient_bar(frame,self.SIDEBAR_W,header_h-2,W-self.SIDEBAR_W,header_h,(0,206,209),(255,20,147))
 
-        # -- Panel titulo lateral izquierdo ----------------------------
-        # Fondo del panel titulo (ya cubierto por sidebar)
-        # Marco decorativo
+        # Panel titulo
         cv2.rectangle(frame,(4,4),(self.SIDEBAR_W-4,133),(40,34,55),-1)
         _stroke_rounded(frame,4,4,self.SIDEBAR_W-4,133,8,(80,60,100),1)
-        # Linea de acento superior
         cv2.rectangle(frame,(4,4),(self.SIDEBAR_W-4,6),(0,206,209),-1)
-
-        # Titulo animado
-        draw_animated_title(frame, self.SIDEBAR_W//2, 40, t)
-
-        # Separador degradado
+        draw_animated_title(frame,self.SIDEBAR_W//2,40,t)
         draw_gradient_bar(frame,8,82,self.SIDEBAR_W-8,84,(0,206,209),(255,20,147))
-
-        put_text_centered(frame,"v5.1",self.SIDEBAR_W//2,98,0.38,(150,130,170),1)
+        put_text_centered(frame,"v5.2",self.SIDEBAR_W//2,98,0.38,(150,130,170),1)
         put_text_centered(frame,"GESTOS",self.SIDEBAR_W//2,116,0.38,(150,130,170),1)
 
-        # -- Badge modo ------------------------------------------------
+        # Badge modo
         mode_labels={
             APP_MODE_PAINT:("* PINTURA",(50,205,50)),
             APP_MODE_COLOR:("* COLOREAR",(30,144,255)),
@@ -1223,38 +1113,34 @@ class VirtualPainter:
         mode_txt,mode_col=mode_labels[self.app_mode]
         bx=self.SIDEBAR_W+14
         (btw,bth),_=cv2.getTextSize(mode_txt,cv2.FONT_HERSHEY_SIMPLEX,0.52,2)
-        # Fondo badge
         cv2.rectangle(frame,(bx-6,8),(bx+btw+8,header_h-8),(28,22,38),-1)
         _stroke_rounded(frame,bx-6,8,bx+btw+8,header_h-8,5,mode_col,2)
         cv2.putText(frame,mode_txt,(bx,header_h//2+8),cv2.FONT_HERSHEY_SIMPLEX,0.52,mode_col,2,cv2.LINE_AA)
 
-        # -- Gesto -----------------------------------------------------
-        GESTURE_ICONS={"DRAW":"DIBUJANDO","SELECT":"SELECCIONAR",
-                       "ERASER":"BORRADOR","OPEN":"PAUSADO",
-                       "PINCH":"GROSOR","THUMB_UP":"SGTE COLOR",
+        # Gesto
+        GESTURE_ICONS={"DRAW":"DIBUJANDO","SELECT":"SELECCIONAR","ERASER":"BORRADOR",
+                       "OPEN":"PAUSADO","PINCH":"GROSOR","THUMB_UP":"SGTE COLOR",
                        "THUMB_DOWN":"ANT COLOR","NONE":"Sin mano","THREE":"3 DEDOS"}
         g_label=GESTURE_ICONS.get(gesture,gesture)
         g_col=(50,205,50) if gesture=="DRAW" else \
               (254,202,80) if gesture in("SELECT","PINCH") else \
-              (147,0,211) if gesture=="ERASER" else (150,130,170)
+              (147,0,211)  if gesture=="ERASER" else (150,130,170)
         (gtw,_),_=cv2.getTextSize(g_label,cv2.FONT_HERSHEY_SIMPLEX,0.44,1)
         gx=W-self.SIDEBAR_W-gtw-16
         cv2.putText(frame,"Gesto:",(gx-58,header_h//2+7),cv2.FONT_HERSHEY_SIMPLEX,0.38,(150,130,170),1,cv2.LINE_AA)
         cv2.putText(frame,g_label,(gx,header_h//2+7),cv2.FONT_HERSHEY_SIMPLEX,0.44,g_col,1,cv2.LINE_AA)
 
-        # -- FPS -------------------------------------------------------
+        # FPS
         fps_col=(50,205,50) if fps>25 else (254,202,80)
         cv2.putText(frame,f"FPS:{int(fps)}",(W-self.SIDEBAR_W+8,header_h-10),
                     cv2.FONT_HERSHEY_SIMPLEX,0.42,fps_col,1,cv2.LINE_AA)
 
-        # ==============================================================
-        #  BOTONES IZQUIERDOS - glassmorphism neon
-        # ==============================================================
+        # Botones izquierdos
         LEFT_BTN_INFO={
-            "BRUSH":       ("PINCEL",   "B", UI["tool_brush"]),
-            "FILL":        ("RELLENO",  "R", UI["tool_fill"]),
-            "ERASER":      ("BORRADOR", "E", UI["tool_eraser"]),
-            "COLOR_PICKER":("COLORES",  "C", UI["tool_color"]),
+            "BRUSH":       ("PINCEL",  "B",UI["tool_brush"]),
+            "FILL":        ("RELLENO", "R",UI["tool_fill"]),
+            "ERASER":      ("BORRADOR","E",UI["tool_eraser"]),
+            "COLOR_PICKER":("COLORES", "C",UI["tool_color"]),
         }
         for name,(x1,y1,x2,y2) in self.left_buttons.items():
             if name not in LEFT_BTN_INFO: continue
@@ -1263,12 +1149,11 @@ class VirtualPainter:
             is_active=(name=="BRUSH"  and self.active_tool==TOOL_BRUSH) or \
                       (name=="FILL"   and self.active_tool==TOOL_FILL)  or \
                       (name=="ERASER" and self.active_tool==TOOL_ERASER)
-            draw_glass_button(frame,x1,y1,x2,y2,label,icon,accent,
-                              is_active,is_hov,self._btn_hover_progress if is_hov else 0.0,t)
+            draw_glass_button_fast(frame,x1,y1,x2,y2,label,icon,accent,
+                                   is_active,is_hov,
+                                   self._btn_hover_progress if is_hov else 0.0,t)
 
-        # ==============================================================
-        #  BOTONES DERECHOS - glassmorphism neon
-        # ==============================================================
+        # Botones derechos
         RIGHT_BTN_INFO={
             "UNDO":     ("DESHACER","<",UI["tool_undo"]),
             "REDO":     ("REHACER", ">",UI["tool_redo"]),
@@ -1283,43 +1168,32 @@ class VirtualPainter:
             label,icon,accent=RIGHT_BTN_INFO[name]
             is_hov=(self._hover_btn==name)
             is_active=(name=="FREE_MODE" and is_free)
-            draw_glass_button(frame,x1,y1,x2,y2,label,icon,accent,
-                              is_active,is_hov,self._btn_hover_progress if is_hov else 0.0,t)
+            draw_glass_button_fast(frame,x1,y1,x2,y2,label,icon,accent,
+                                   is_active,is_hov,
+                                   self._btn_hover_progress if is_hov else 0.0,t)
 
-        # -- Indicador de color actual (izquierda, abajo de botones) --
-        col_indicator_y = self.left_buttons["COLOR_PICKER"][3] + 14
-        if col_indicator_y + 30 < H - 55:
-            # Etiqueta
-            put_text_centered(frame,"COLOR ACTUAL",self.SIDEBAR_W//2,col_indicator_y+8,
-                              0.32,(150,130,170),1)
-            # Circulo con el color actual
-            col_cx = self.SIDEBAR_W//2
-            col_cy = col_indicator_y+28
-            # Borde neon del circulo de color
-            cur = self.current_color
+        # Indicador de color actual
+        col_indicator_y=self.left_buttons["COLOR_PICKER"][3]+14
+        if col_indicator_y+30<H-55:
+            put_text_centered(frame,"COLOR ACTUAL",self.SIDEBAR_W//2,col_indicator_y+8,0.32,(150,130,170),1)
+            col_cx=self.SIDEBAR_W//2; col_cy=col_indicator_y+28
+            cur=self.current_color
             if not self.eraser_mode:
-                for gr in [18,14,10]:
-                    ov=frame.copy()
-                    cv2.circle(ov,(col_cx,col_cy),gr,cur,-1,cv2.LINE_AA)
-                    cv2.addWeighted(ov,0.06,frame,0.94,0,frame)
+                dim=tuple(max(0,int(c*0.3)) for c in cur)
+                cv2.circle(frame,(col_cx,col_cy),18,dim,-1,cv2.LINE_AA)
                 cv2.circle(frame,(col_cx,col_cy),14,cur,-1,cv2.LINE_AA)
                 cv2.circle(frame,(col_cx,col_cy),14,(255,255,255),1,cv2.LINE_AA)
             else:
                 cv2.circle(frame,(col_cx,col_cy),14,(200,180,150),-1,cv2.LINE_AA)
                 cv2.putText(frame,"E",(col_cx-5,col_cy+5),cv2.FONT_HERSHEY_SIMPLEX,0.45,(50,50,50),2)
 
-        # -- Notificacion ----------------------------------------------
+        # Notificacion - sin frame.copy()
         if self._notif_timer>0:
             self._notif_timer-=1
-            alpha=min(1.0,self._notif_timer/20.0)
             nx=self.SIDEBAR_W+18; ny=H-55
             (nw,nh),_=cv2.getTextSize(self._notif,cv2.FONT_HERSHEY_SIMPLEX,0.58,2)
-            ov=frame.copy()
-            # Fondo oscuro de la notificacion
-            _fill_rounded(ov,nx-10,ny-nh-10,nx+nw+10,ny+10,8,(18,14,24))
-            _stroke_rounded(ov,nx-10,ny-nh-10,nx+nw+10,ny+10,8,self._notif_color,2)
-            cv2.addWeighted(ov,alpha*0.92,frame,1-alpha*0.92,0,frame)
-            # Sombra del texto
+            _fill_rounded(frame,nx-10,ny-nh-10,nx+nw+10,ny+10,8,(18,14,24))
+            _stroke_rounded(frame,nx-10,ny-nh-10,nx+nw+10,ny+10,8,self._notif_color,2)
             cv2.putText(frame,self._notif,(nx+1,ny+1),cv2.FONT_HERSHEY_SIMPLEX,0.58,(0,0,0),3,cv2.LINE_AA)
             cv2.putText(frame,self._notif,(nx,ny),cv2.FONT_HERSHEY_SIMPLEX,0.58,self._notif_color,2,cv2.LINE_AA)
 
@@ -1329,20 +1203,17 @@ class VirtualPainter:
     def _draw_cursor(self,frame,pt,gesture):
         col=self.current_color if not self.eraser_mode else (180,160,130)
         r=self.brush_size+4
-        self._trail.append((pt[0],pt[1],col))
         if self.active_tool==TOOL_FILL and gesture=="DRAW":
             cv2.rectangle(frame,(pt[0]-14,pt[1]-8),(pt[0]+14,pt[1]+18),col,-1)
             cv2.rectangle(frame,(pt[0]-14,pt[1]-8),(pt[0]+14,pt[1]+18),(254,202,80),2)
             cv2.putText(frame,"F",(pt[0]-5,pt[1]+12),cv2.FONT_HERSHEY_SIMPLEX,0.55,(20,20,20),2,cv2.LINE_AA)
         elif self.active_tool==TOOL_ERASER or self.eraser_mode:
             er=self.brush_size*self.cfg["eraser_multiplier"]+4
-            ov=frame.copy(); cv2.circle(ov,pt,er,(200,180,150),-1)
-            cv2.addWeighted(ov,0.15,frame,0.85,0,frame)
             cv2.circle(frame,pt,er,(180,160,130),2,cv2.LINE_AA)
             cv2.line(frame,(pt[0]-er,pt[1]),(pt[0]+er,pt[1]),(180,160,130),1)
             cv2.line(frame,(pt[0],pt[1]-er),(pt[0],pt[1]+er),(180,160,130),1)
         elif gesture=="DRAW":
-            draw_glow_circle(frame,pt[0],pt[1],r,col,0.4)
+            draw_glow_circle_fast(frame,pt[0],pt[1],r,col,0.4)
             cv2.circle(frame,pt,4,(255,255,255),-1)
         elif gesture=="SELECT":
             cv2.drawMarker(frame,pt,(254,202,80),cv2.MARKER_CROSS,26,2,cv2.LINE_AA)
@@ -1356,10 +1227,10 @@ class VirtualPainter:
         dist=info["pinch_dist"]; is_p=info["is_pinching"]; is_d=info["is_dragging"]
         cv2.line(output,thumb,idx,(150,130,170),1,cv2.LINE_AA)
         if is_d:
-            draw_glow_circle(output,idx[0],idx[1],16,(60,159,255),0.5)
+            draw_glow_circle_fast(output,idx[0],idx[1],16,(60,159,255),0.5)
             cv2.putText(output,"DRAG",(idx[0]+22,idx[1]-8),cv2.FONT_HERSHEY_SIMPLEX,0.55,(60,159,255),2)
         elif is_p:
-            draw_glow_circle(output,idx[0],idx[1],14,(50,205,50),0.6)
+            draw_glow_circle_fast(output,idx[0],idx[1],14,(50,205,50),0.6)
         else:
             cv2.circle(output,idx,14,(0,206,209),2,cv2.LINE_AA)
             cv2.circle(output,idx,4,(0,206,209),-1)
@@ -1368,18 +1239,21 @@ class VirtualPainter:
         filled=int(bw*(1-rel))
         cv2.putText(output,"PINCH",(bx,by-4),cv2.FONT_HERSHEY_SIMPLEX,0.40,(150,130,170),1,cv2.LINE_AA)
         cv2.rectangle(output,(bx,by),(bx+bw,by+10),(28,22,38),-1)
-        col_bar=(50,205,50) if is_p else (0,206,209)
-        cv2.rectangle(output,(bx,by),(bx+filled,by+10),col_bar,-1)
+        cv2.rectangle(output,(bx,by),(bx+filled,by+10),(50,205,50) if is_p else (0,206,209),-1)
         _stroke_rounded(output,bx,by,bx+bw,by+10,2,(80,60,100),1)
 
     def run(self):
         cap=cv2.VideoCapture(self.cfg["camera_index"])
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,self.W); cap.set(cv2.CAP_PROP_FRAME_HEIGHT,self.H)
-        cap.set(cv2.CAP_PROP_FPS,60); cap.set(cv2.CAP_PROP_BUFFERSIZE,1)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,self.W)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT,self.H)
+        cap.set(cv2.CAP_PROP_FPS,60)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE,1)
         if not cap.isOpened(): print("[ERROR] No se pudo abrir la camara."); return
-        win="Magic Paint - Gestos de Mano v5.1"
+
+        win="Magic Paint v5.2 - OPTIMIZADO"
         cv2.namedWindow(win,cv2.WINDOW_NORMAL); cv2.resizeWindow(win,self.W,self.H)
         _print_banner()
+
         last_bg=None; gesture="NONE"; _lm_draw=None; _smooth_d=None; _free_info=None
 
         while True:
@@ -1389,11 +1263,14 @@ class VirtualPainter:
             fh,fw=frame.shape[:2]
             if fw!=self.W or fh!=self.H: frame=cv2.resize(frame,(self.W,self.H))
             last_bg=frame.copy()
+
             now=time.time()
             self._fps_buf.append(1.0/max(now-self._last_t,1e-6)); self._last_t=now
             fps=float(np.mean(self._fps_buf))
             self._frame_counter+=1
-            skip=self.cfg["skip_frames_free_mode"] if self.app_mode==APP_MODE_FREE else self.cfg["skip_frames_detection"]
+
+            skip=self.cfg["skip_frames_free_mode"] if self.app_mode==APP_MODE_FREE \
+                 else self.cfg["skip_frames_detection"]
             process_hands=(self._frame_counter%(skip+1)==0)
 
             if process_hands:
@@ -1450,8 +1327,7 @@ class VirtualPainter:
                             in_right=_smooth_d[0]>self.W-self.SIDEBAR_W
                             in_bl=any(x1<=_smooth_d[0]<=x2 and y1<=_smooth_d[1]<=y2 for x1,y1,x2,y2 in self.left_buttons.values())
                             in_br=any(x1<=_smooth_d[0]<=x2 and y1<=_smooth_d[1]<=y2 for x1,y1,x2,y2 in self.right_buttons.values())
-                            in_hdr=_smooth_d[1]<48
-                            blocked=in_left or in_right or in_bl or in_br or in_hdr
+                            blocked=in_left or in_right or in_bl or in_br or _smooth_d[1]<48
                             if not blocked:
                                 if self.active_tool==TOOL_FILL:
                                     if not self._fill_done: self._apply_fill(_smooth_d); self._fill_done=True
@@ -1473,7 +1349,7 @@ class VirtualPainter:
                             else: self.drawing=False; self.prev_point=None; self._fill_done=False
                         else: self.drawing=False; self.prev_point=None; self._fill_done=False
 
-            # -- Renderizado -------------------------------------------
+            # -- Renderizado ------------------------------------------
             if self.app_mode==APP_MODE_FREE:
                 if(self._free_bg_cache is None or
                         self._frame_counter-self._free_bg_frame_cnt>=self._free_bg_interval):
@@ -1483,9 +1359,10 @@ class VirtualPainter:
             elif self.app_mode==APP_MODE_COLOR and self.color_layer is not None:
                 output=cv2.addWeighted(self.color_layer,0.88,frame,0.12,0)
             else:
-                output=self._merge_canvas(frame)
+                output=self._merge_canvas_fast(frame)
 
-            if self.app_mode!=APP_MODE_COLOR: self._update_effects(output)
+            if self.app_mode!=APP_MODE_COLOR:
+                self._update_effects_fast(output)
 
             if _lm_draw is not None and _smooth_d is not None and self._hand_present:
                 self.mp_draw.draw_landmarks(output,_lm_draw,self.mp_hands.HAND_CONNECTIONS,
@@ -1570,10 +1447,9 @@ def create_sample_images(out_dir):
     cv2.imwrite(os.path.join(out_dir,"gato.png"),img)
     print(f"[OK] Imagenes de ejemplo en '{out_dir}/'")
 
-
 def _print_banner():
     print("="*68)
-    print("   M A G I C   P A I N T  v5.1  -  Botones Glassmorphism Neon")
+    print("   M A G I C   P A I N T  v5.2  -  OPTIMIZADO")
     print("   Universidad Politecnica del Carchi - Carrera de Computacion")
     print("="*68)
     print("  Modos:   [1] Pintura libre   [2] Colorear   [3] Modo Libre")
@@ -1582,10 +1458,12 @@ def _print_banner():
     print("  Colores: [C] Selector de colores (48 colores)")
     print("  Ctrl+Z Undo  |  Ctrl+Y Redo  |  H HUD  |  F Full  |  Q Salir")
     print("="*68)
+    print("  OPTIMIZACIONES: 0 frame.copy() en UI, sidebar cacheada,")
+    print("  nubes cada 4 frames, blobs cacheados, particulas reducidas")
+    print("="*68)
     if not PYAUTOGUI_OK:
         print("  [!] pip install pyautogui  para Modo Libre")
         print("="*68)
-
 
 def main():
     if len(sys.argv)>1 and sys.argv[1].lstrip('-').isdigit():
@@ -1594,10 +1472,9 @@ def main():
         create_sample_images(CONFIG["images_dir"]); return
     total=sum(len(glob.glob(os.path.join(CONFIG["images_dir"],ext))) for ext in CONFIG["image_extensions"])
     if total==0:
-        print(f"[INFO] Generando imagenes de ejemplo...")
+        print("[INFO] Generando imagenes de ejemplo...")
         create_sample_images(CONFIG["images_dir"])
     VirtualPainter().run()
-
 
 if __name__=="__main__":
     main()
