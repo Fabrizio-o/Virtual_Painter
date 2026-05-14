@@ -14,7 +14,7 @@ from config import CONFIG
 
 def _print_banner():
     print("=" * 68)
-    print("   M A G I C   P A I N T  v5.2  -  OPTIMIZADO")
+    print("   M A G I C   P A I N T  v5.2")
     print("   Universidad Politecnica del Carchi - Carrera de Computacion")
     print("=" * 68)
     print("  Modos:   [1] Pintura libre   [2] Colorear   [3] Modo Libre")
