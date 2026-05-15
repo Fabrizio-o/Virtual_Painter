@@ -8,7 +8,6 @@ import os
 # ─────────────────────────────────────────────
 APP_MODE_PAINT = "PAINT"
 APP_MODE_COLOR = "COLOR"
-APP_MODE_FREE  = "FREE"
 
 TOOL_BRUSH  = "BRUSH"
 TOOL_FILL   = "FILL"
@@ -45,11 +44,9 @@ UI = {
     "tool_clear":    (255,  69,   0),
     "tool_save":     (0,   200, 100),
     "tool_open":     (255,  20, 147),
-    "tool_free":     (0,   206, 209),
     "tool_print":    (139,  90,  43),
     "mode_paint":    (80,  222, 100),
     "mode_color":    (60,  159, 255),
-    "mode_free":     (251, 219,  72),
     "border_claro":  (200, 180, 150),
     "border_brillo": (150, 130, 100),
 }
@@ -80,16 +77,7 @@ CONFIG = {
     "tracking_confidence":  0.65,
     "images_dir": "images_to_color",
     "image_extensions": ["*.png", "*.jpg", "*.jpeg", "*.bmp"],
-    "mouse_smoothing": 7,
-    "pinch_threshold": 45,
-    "pinch_release_threshold": 60,
-    "drag_min_move": 8,
-    "click_cooldown_frames": 18,
-    "right_click_cooldown": 22,
-    "double_click_cooldown": 25,
-    "mouse_zone_margin": 0.08,
     "skip_frames_detection": 1,
-    "skip_frames_free_mode": 3,
     "particle_count": 12,
     "max_paint_splashes": 8,
     "ui_update_every": 1,

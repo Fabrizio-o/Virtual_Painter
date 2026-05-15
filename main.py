@@ -17,7 +17,7 @@ def _print_banner():
     print("   M A G I C   P A I N T  v5.2")
     print("   Universidad Politecnica del Carchi - Carrera de Computacion")
     print("=" * 68)
-    print("  Modos:   [1] Pintura libre   [2] Colorear   [3] Modo Libre")
+    print("  Modos:   [1] Pintura libre   [2] Colorear")
     print("  Herram:  [B] Pincel  [K] Fill  [E] Borrador")
     print("  Imagen:  [O] Abrir  [R] Restaurar  [S] Guardar  [P] Imprimir")
     print("  Colores: [C] Selector de colores (48 colores)")
@@ -26,11 +26,6 @@ def _print_banner():
     print("  OPTIMIZACIONES: 0 frame.copy() en UI, sidebar cacheada,")
     print("  nubes cada 4 frames, blobs cacheados, particulas reducidas")
     print("=" * 68)
-    try:
-        import pyautogui  # noqa: F401
-    except ImportError:
-        print("  [!] pip install pyautogui  para Modo Libre")
-        print("=" * 68)
 
 
 def create_sample_images(out_dir):

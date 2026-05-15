@@ -13,7 +13,7 @@ from datetime import datetime
 
 from config import (
     CONFIG, UI, COLORS,
-    APP_MODE_PAINT, APP_MODE_COLOR, APP_MODE_FREE,
+    APP_MODE_PAINT, APP_MODE_COLOR,
     TOOL_BRUSH, TOOL_FILL, TOOL_ERASER,
     TIP, PIP,
 )
@@ -25,7 +25,6 @@ from ui_helpers import (
     put_text_centered, _fill_rounded, _stroke_rounded, _lerp_color,
 )
 from tools import flood_fill_smooth, ColorPicker, ImageSelector
-from mouse_controller import MouseController, PYAUTOGUI_OK
 
 
 class VirtualPainter:
@@ -143,23 +142,15 @@ class VirtualPainter:
         self._last_gesture   = "NONE"
         self._hand_present   = False
 
-        # Caches de fondo
-        self._free_bg_cache      = None
-        self._free_bg_frame_cnt  = -1
-        self._free_bg_interval   = 4
-        self._sky_base           = None
-        self._cloud_frame_cnt    = -1
-        self._cloud_interval     = self.cfg["cloud_redraw_interval"]
-        self._sky_with_clouds    = None
+        # Caches de fondo (sky + nubes)
+        self._sky_base        = None
+        self._cloud_frame_cnt = -1
+        self._cloud_interval  = self.cfg["cloud_redraw_interval"]
+        self._sky_with_clouds = None
 
         # Cache de blobs de pintura
         self._blob_cache  = {}
         self._blob_t_last = -99
-
-        # Mouse (modo libre)
-        self.mouse_ctrl     = MouseController(self.cfg, self.W, self.H)
-        self._mouse_action  = ""
-        self._mouse_action_t = 0
 
         # Logo UPEC
         self._upec_logo = None
@@ -410,13 +401,12 @@ class VirtualPainter:
         }
         right_x = W - BTN_W - 8
         self.right_buttons = {
-            "UNDO":      (right_x, btn_y(0), right_x+BTN_W, btn_y(0)+BTN_H),
-            "REDO":      (right_x, btn_y(1), right_x+BTN_W, btn_y(1)+BTN_H),
-            "CLEAR":     (right_x, btn_y(2), right_x+BTN_W, btn_y(2)+BTN_H),
-            "SAVE":      (right_x, btn_y(3), right_x+BTN_W, btn_y(3)+BTN_H),
-            "OPEN_IMG":  (right_x, btn_y(4), right_x+BTN_W, btn_y(4)+BTN_H),
-            "FREE_MODE": (right_x, btn_y(5), right_x+BTN_W, btn_y(5)+BTN_H),
-            "PRINT":     (right_x, btn_y(6), right_x+BTN_W, btn_y(6)+BTN_H),
+            "UNDO":     (right_x, btn_y(0), right_x+BTN_W, btn_y(0)+BTN_H),
+            "REDO":     (right_x, btn_y(1), right_x+BTN_W, btn_y(1)+BTN_H),
+            "CLEAR":    (right_x, btn_y(2), right_x+BTN_W, btn_y(2)+BTN_H),
+            "SAVE":     (right_x, btn_y(3), right_x+BTN_W, btn_y(3)+BTN_H),
+            "OPEN_IMG": (right_x, btn_y(4), right_x+BTN_W, btn_y(4)+BTN_H),
+            "PRINT":    (right_x, btn_y(5), right_x+BTN_W, btn_y(5)+BTN_H),
         }
         self.buttons  = {**self.left_buttons, **self.right_buttons}
         self.DRAW_X1  = self.SIDEBAR_W
@@ -552,7 +542,6 @@ class VirtualPainter:
             path = self.img_selector.show(self.W, self.H)
             if path:
                 self.load_color_image(path)
-        elif name == "FREE_MODE":  self._toggle_free_mode()
         elif name == "COLOR_PICKER": self._open_color_picker()
 
     def _open_color_picker(self):
@@ -567,51 +556,6 @@ class VirtualPainter:
             self.eraser_mode = False
             self.active_tool = TOOL_BRUSH
             self._notify(f"Color: {result['name']}", result["bgr"])
-
-    def _toggle_free_mode(self):
-        if self.app_mode == APP_MODE_FREE:
-            self.mouse_ctrl.release_all()
-            self.app_mode        = APP_MODE_PAINT
-            self._free_bg_cache  = None
-            self._notify("Modo: Pintura Libre", UI["mode_paint"])
-        else:
-            if not PYAUTOGUI_OK:
-                self._notify("Instala: pip install pyautogui", UI["vivo_rojo"])
-                return
-            self.mouse_ctrl.release_all()
-            self.app_mode        = APP_MODE_FREE
-            self._free_bg_cache  = None
-            self._notify("MODO LIBRE - Controla el mouse!", UI["mode_free"])
-
-    # ──────────────────────────────────────────
-    #  PROCESO MODO LIBRE
-    # ──────────────────────────────────────────
-    def _process_free_mode(self, lm, gesture):
-        h, w = self.H, self.W
-
-        def pt(i): return (int(lm[i].x*w), int(lm[i].y*h))
-
-        index      = pt(8); thumb = pt(4)
-        pinch_dist = math.dist(thumb, index)
-        is_pinching = pinch_dist < self.cfg["pinch_threshold"]
-
-        self.mouse_ctrl.smooth_move(index[0], index[1])
-
-        if gesture == "SELECT" and not is_pinching:
-            self.mouse_ctrl.right_click()
-        elif gesture in ("DRAW", "PINCH") or is_pinching:
-            self.mouse_ctrl.handle_pinch(True,  index[0], index[1])
-        else:
-            self.mouse_ctrl.handle_pinch(False, index[0], index[1])
-
-        self.mouse_ctrl.tick()
-        return {
-            "index":      index,
-            "thumb":      thumb,
-            "pinch_dist": pinch_dist,
-            "is_pinching": is_pinching,
-            "is_dragging": self.mouse_ctrl.is_dragging,
-        }
 
     # ──────────────────────────────────────────
     #  RENDER: FONDO Y CANVAS
@@ -642,12 +586,6 @@ class VirtualPainter:
                 output[mask] = (
                     output[mask] * (1-op) + self.canvas[mask] * op
                 ).astype(np.uint8)
-        return output
-
-    def _build_free_bg(self, frame):
-        output = self._get_sky_base().copy()
-        draw_clouds_fast(output, time.time())
-        cv2.addWeighted(frame, 0.25, output, 0.75, 0, output)
         return output
 
     # ──────────────────────────────────────────
@@ -701,17 +639,15 @@ class VirtualPainter:
     def _draw_ui(self, frame, gesture, fps):
         if not self.show_hud:
             return frame
-        W, H  = self.W, self.H
-        is_free = (self.app_mode == APP_MODE_FREE)
+        W, H = self.W, self.H
         t = time.time()
 
         # Sidebars
-        draw_glass_sidebar_fast(frame, 0,             self.SIDEBAR_W, H)
+        draw_glass_sidebar_fast(frame, 0,               self.SIDEBAR_W, H)
         draw_glass_sidebar_fast(frame, W-self.SIDEBAR_W, self.SIDEBAR_W, H)
 
         # Bordes neon
-        border_col = (0, 206, 209) if not is_free else (251, 219, 72)
-        draw_glass_border_fast(frame, self.SIDEBAR_W,   0, H, border_col)
+        draw_glass_border_fast(frame, self.SIDEBAR_W,   0, H, (0, 206, 209))
         draw_glass_border_fast(frame, W-self.SIDEBAR_W, 0, H, (255, 20, 147))
 
         # Manchas de pintura
@@ -738,9 +674,8 @@ class VirtualPainter:
         mode_labels = {
             APP_MODE_PAINT: ("* PINTURA",  (50,  205,  50)),
             APP_MODE_COLOR: ("* COLOREAR", (30,  144, 255)),
-            APP_MODE_FREE:  ("* LIBRE",    (0,   206, 209)),
         }
-        mode_txt, mode_col = mode_labels[self.app_mode]
+        mode_txt, mode_col = mode_labels.get(self.app_mode, ("* PINTURA", (50, 205, 50)))
         bx = self.SIDEBAR_W + 14
         (btw, bth), _ = cv2.getTextSize(mode_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
         cv2.rectangle(frame, (bx-6, 8), (bx+btw+8, header_h-8), (28, 22, 38), -1)
@@ -798,20 +733,19 @@ class VirtualPainter:
 
         # Botones derechos
         RIGHT_BTN_INFO = {
-            "UNDO":      ("DESHACER", "<", UI["tool_undo"]),
-            "REDO":      ("REHACER",  ">", UI["tool_redo"]),
-            "CLEAR":     ("LIMPIAR",  "X", UI["tool_clear"]),
-            "SAVE":      ("GUARDAR",  "S", UI["tool_save"]),
-            "OPEN_IMG":  ("ABRIR",    "O", UI["tool_open"]),
-            "FREE_MODE": ("LIBRE",    "L", UI["tool_free"]),
-            "PRINT":     ("IMPRIMIR", "P", UI["tool_print"]),
+            "UNDO":     ("DESHACER", "<", UI["tool_undo"]),
+            "REDO":     ("REHACER",  ">", UI["tool_redo"]),
+            "CLEAR":    ("LIMPIAR",  "X", UI["tool_clear"]),
+            "SAVE":     ("GUARDAR",  "S", UI["tool_save"]),
+            "OPEN_IMG": ("ABRIR",    "O", UI["tool_open"]),
+            "PRINT":    ("IMPRIMIR", "P", UI["tool_print"]),
         }
         for name, (x1, y1, x2, y2) in self.right_buttons.items():
             if name not in RIGHT_BTN_INFO:
                 continue
             label, icon, accent = RIGHT_BTN_INFO[name]
             is_hov    = (self._hover_btn == name)
-            is_active = (name == "FREE_MODE" and is_free)
+            is_active = False
             draw_glass_button_fast(
                 frame, x1, y1, x2, y2, label, icon, accent,
                 is_active, is_hov,
@@ -852,7 +786,7 @@ class VirtualPainter:
         return frame
 
     # ──────────────────────────────────────────
-    #  CURSORES
+    #  CURSOR
     # ──────────────────────────────────────────
     def _draw_cursor(self, frame, pt, gesture):
         col = self.current_color if not self.eraser_mode else (180, 160, 130)
@@ -877,32 +811,6 @@ class VirtualPainter:
             cv2.circle(frame, pt, 12, (150,130,170), 1, cv2.LINE_AA)
             cv2.circle(frame, pt, 3,  (150,130,170), -1)
 
-    def _draw_free_cursor(self, output, info):
-        idx   = info["index"]; thumb = info["thumb"]
-        dist  = info["pinch_dist"]
-        is_p  = info["is_pinching"]
-        is_d  = info["is_dragging"]
-        cv2.line(output, thumb, idx, (150,130,170), 1, cv2.LINE_AA)
-        if is_d:
-            draw_glow_circle_fast(output, idx[0], idx[1], 16, (60,159,255), 0.5)
-            cv2.putText(output, "DRAG", (idx[0]+22, idx[1]-8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (60,159,255), 2)
-        elif is_p:
-            draw_glow_circle_fast(output, idx[0], idx[1], 14, (50,205,50), 0.6)
-        else:
-            cv2.circle(output, idx, 14, (0,206,209), 2, cv2.LINE_AA)
-            cv2.circle(output, idx,  4, (0,206,209), -1)
-        bx, by = self.SIDEBAR_W + 20, self.H - 60; bw = 180
-        thr    = self.cfg["pinch_threshold"]
-        rel    = float(np.clip(dist / (thr*2), 0, 1))
-        filled = int(bw * (1 - rel))
-        cv2.putText(output, "PINCH", (bx, by-4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (150,130,170), 1, cv2.LINE_AA)
-        cv2.rectangle(output, (bx, by), (bx+bw,    by+10), (28,22,38), -1)
-        cv2.rectangle(output, (bx, by), (bx+filled, by+10),
-                      (50,205,50) if is_p else (0,206,209), -1)
-        _stroke_rounded(output, bx, by, bx+bw, by+10, 2, (80,60,100), 1)
-
     # ──────────────────────────────────────────
     #  BUCLE PRINCIPAL
     # ──────────────────────────────────────────
@@ -922,8 +830,8 @@ class VirtualPainter:
         from main import _print_banner
         _print_banner()
 
-        last_bg    = None; gesture = "NONE"
-        _lm_draw   = None; _smooth_d = None; _free_info = None
+        last_bg = None; gesture = "NONE"
+        _lm_draw = None; _smooth_d = None
 
         while True:
             ret, frame = cap.read()
@@ -942,9 +850,7 @@ class VirtualPainter:
             fps = float(np.mean(self._fps_buf))
             self._frame_counter += 1
 
-            skip = (self.cfg["skip_frames_free_mode"]
-                    if self.app_mode == APP_MODE_FREE
-                    else self.cfg["skip_frames_detection"])
+            skip = self.cfg["skip_frames_detection"]
             process_hands = (self._frame_counter % (skip+1) == 0)
 
             if process_hands:
@@ -977,11 +883,8 @@ class VirtualPainter:
                     self._last_gesture = "NONE"
 
             if not self._hand_present:
-                gesture  = "NONE"; _lm_draw = None; _smooth_d = None; _free_info = None
+                gesture  = "NONE"; _lm_draw = None; _smooth_d = None
                 self.drawing = False; self.prev_point = None; self._fill_done = False
-                if self.app_mode == APP_MODE_FREE:
-                    self.mouse_ctrl.handle_pinch(False, 0, 0)
-                    self.mouse_ctrl.tick()
             else:
                 gesture  = self._last_gesture
                 _lm_draw = self._last_landmarks
@@ -990,103 +893,93 @@ class VirtualPainter:
                     _smooth_d = self._smooth_pt(
                         (int(lm[8].x*self.W), int(lm[8].y*self.H))
                     )
-                    if self.app_mode == APP_MODE_FREE:
-                        _free_info = self._process_free_mode(lm, gesture)
-                    else:
-                        if gesture == "THUMB_UP":
-                            self.color_index = (self.color_index + 1) % len(COLORS)
-                            self.current_color = COLORS[self.color_index]["bgr"]
-                            self.eraser_mode   = False
-                            self._notify(
-                                f"Color: {COLORS[self.color_index]['name']}",
-                                COLORS[self.color_index]["bgr"]
-                            )
-                        elif gesture == "THUMB_DOWN":
-                            self.color_index = (self.color_index - 1) % len(COLORS)
-                            self.current_color = COLORS[self.color_index]["bgr"]
-                            self.eraser_mode   = False
-                            self._notify(
-                                f"Color: {COLORS[self.color_index]['name']}",
-                                COLORS[self.color_index]["bgr"]
-                            )
-                        elif gesture == "ERASER":
-                            if self.active_tool != TOOL_ERASER:
-                                self.active_tool = TOOL_ERASER
-                                self.eraser_mode = True
-                                self._notify("Borrador activado", UI["tool_eraser"])
-                        elif gesture == "OPEN":
-                            self.drawing = False; self.prev_point = None
+                    if gesture == "THUMB_UP":
+                        self.color_index = (self.color_index + 1) % len(COLORS)
+                        self.current_color = COLORS[self.color_index]["bgr"]
+                        self.eraser_mode   = False
+                        self._notify(
+                            f"Color: {COLORS[self.color_index]['name']}",
+                            COLORS[self.color_index]["bgr"]
+                        )
+                    elif gesture == "THUMB_DOWN":
+                        self.color_index = (self.color_index - 1) % len(COLORS)
+                        self.current_color = COLORS[self.color_index]["bgr"]
+                        self.eraser_mode   = False
+                        self._notify(
+                            f"Color: {COLORS[self.color_index]['name']}",
+                            COLORS[self.color_index]["bgr"]
+                        )
+                    elif gesture == "ERASER":
+                        if self.active_tool != TOOL_ERASER:
+                            self.active_tool = TOOL_ERASER
+                            self.eraser_mode = True
+                            self._notify("Borrador activado", UI["tool_eraser"])
+                    elif gesture == "OPEN":
+                        self.drawing = False; self.prev_point = None
 
-                        if gesture in ("SELECT", "OPEN", "PINCH"):
-                            if _smooth_d:
-                                self._check_btn_hover(_smooth_d, last_bg)
-                            self.drawing = False; self.prev_point = None
-                            self._fill_done = False
-                        elif gesture == "DRAW" and _smooth_d:
-                            self._hover_btn          = None
-                            self._hover_btn_frames   = 0
-                            self._btn_hover_progress = 0
-                            in_left  = _smooth_d[0] < self.SIDEBAR_W
-                            in_right = _smooth_d[0] > self.W - self.SIDEBAR_W
-                            in_bl    = any(
-                                x1 <= _smooth_d[0] <= x2 and y1 <= _smooth_d[1] <= y2
-                                for x1, y1, x2, y2 in self.left_buttons.values()
-                            )
-                            in_br    = any(
-                                x1 <= _smooth_d[0] <= x2 and y1 <= _smooth_d[1] <= y2
-                                for x1, y1, x2, y2 in self.right_buttons.values()
-                            )
-                            blocked = in_left or in_right or in_bl or in_br or _smooth_d[1] < 48
-                            if not blocked:
-                                if self.active_tool == TOOL_FILL:
-                                    if not self._fill_done:
-                                        self._apply_fill(_smooth_d)
-                                        self._fill_done = True
-                                    self.drawing    = False
-                                    self.prev_point = None
-                                elif self.active_tool == TOOL_ERASER or self.eraser_mode:
-                                    if not self.drawing:
-                                        self._push_undo(); self.drawing = True
-                                    esize = self.brush_size * self.cfg["eraser_multiplier"]
-                                    if (self.app_mode == APP_MODE_COLOR and
-                                            self.color_image_orig is not None):
-                                        mask_e = np.zeros((self.H, self.W), dtype=np.uint8)
-                                        cv2.circle(mask_e, _smooth_d, esize, 255, -1)
-                                        self.color_layer = np.where(
-                                            np.stack([mask_e]*3, axis=-1) > 0,
-                                            self.color_image_orig, self.color_layer
-                                        ).astype(np.uint8)
-                                    else:
-                                        self._stroke(_smooth_d, (0,0,0), esize)
-                                    self.prev_point = _smooth_d
-                                else:
-                                    if not self.drawing:
-                                        self._push_undo(); self.drawing = True
-                                    self._stroke(_smooth_d, self.current_color, self.brush_size)
-                                    self.prev_point = _smooth_d
-                            else:
+                    if gesture in ("SELECT", "OPEN", "PINCH"):
+                        if _smooth_d:
+                            self._check_btn_hover(_smooth_d, last_bg)
+                        self.drawing = False; self.prev_point = None
+                        self._fill_done = False
+                    elif gesture == "DRAW" and _smooth_d:
+                        self._hover_btn          = None
+                        self._hover_btn_frames   = 0
+                        self._btn_hover_progress = 0
+                        in_left  = _smooth_d[0] < self.SIDEBAR_W
+                        in_right = _smooth_d[0] > self.W - self.SIDEBAR_W
+                        in_bl    = any(
+                            x1 <= _smooth_d[0] <= x2 and y1 <= _smooth_d[1] <= y2
+                            for x1, y1, x2, y2 in self.left_buttons.values()
+                        )
+                        in_br    = any(
+                            x1 <= _smooth_d[0] <= x2 and y1 <= _smooth_d[1] <= y2
+                            for x1, y1, x2, y2 in self.right_buttons.values()
+                        )
+                        blocked = in_left or in_right or in_bl or in_br or _smooth_d[1] < 48
+                        if not blocked:
+                            if self.active_tool == TOOL_FILL:
+                                if not self._fill_done:
+                                    self._apply_fill(_smooth_d)
+                                    self._fill_done = True
                                 self.drawing    = False
                                 self.prev_point = None
-                                self._fill_done = False
+                            elif self.active_tool == TOOL_ERASER or self.eraser_mode:
+                                if not self.drawing:
+                                    self._push_undo(); self.drawing = True
+                                esize = self.brush_size * self.cfg["eraser_multiplier"]
+                                if (self.app_mode == APP_MODE_COLOR and
+                                        self.color_image_orig is not None):
+                                    mask_e = np.zeros((self.H, self.W), dtype=np.uint8)
+                                    cv2.circle(mask_e, _smooth_d, esize, 255, -1)
+                                    self.color_layer = np.where(
+                                        np.stack([mask_e]*3, axis=-1) > 0,
+                                        self.color_image_orig, self.color_layer
+                                    ).astype(np.uint8)
+                                else:
+                                    self._stroke(_smooth_d, (0,0,0), esize)
+                                self.prev_point = _smooth_d
+                            else:
+                                if not self.drawing:
+                                    self._push_undo(); self.drawing = True
+                                self._stroke(_smooth_d, self.current_color, self.brush_size)
+                                self.prev_point = _smooth_d
                         else:
                             self.drawing    = False
                             self.prev_point = None
                             self._fill_done = False
+                    else:
+                        self.drawing    = False
+                        self.prev_point = None
+                        self._fill_done = False
 
             # ── Renderizado ────────────────────────
-            if self.app_mode == APP_MODE_FREE:
-                if (self._free_bg_cache is None or
-                        self._frame_counter - self._free_bg_frame_cnt >= self._free_bg_interval):
-                    self._free_bg_cache    = self._build_free_bg(frame)
-                    self._free_bg_frame_cnt = self._frame_counter
-                output = self._free_bg_cache.copy()
-            elif self.app_mode == APP_MODE_COLOR and self.color_layer is not None:
+            if self.app_mode == APP_MODE_COLOR and self.color_layer is not None:
                 output = cv2.addWeighted(self.color_layer, 0.88, frame, 0.12, 0)
             else:
                 output = self._merge_canvas_fast(frame)
 
-            if self.app_mode != APP_MODE_COLOR:
-                self._update_effects_fast(output)
+            self._update_effects_fast(output)
 
             if _lm_draw is not None and _smooth_d is not None and self._hand_present:
                 self.mp_draw.draw_landmarks(
@@ -1096,10 +989,7 @@ class VirtualPainter:
                     self.mp_draw_styles.DrawingSpec(
                         color=(0,206,209), thickness=2),
                 )
-                if self.app_mode == APP_MODE_FREE and _free_info is not None:
-                    self._draw_free_cursor(output, _free_info)
-                else:
-                    self._draw_cursor(output, _smooth_d, gesture)
+                self._draw_cursor(output, _smooth_d, gesture)
 
             output = self._draw_ui(output, gesture, fps)
             cv2.imshow(win, output)
@@ -1107,19 +997,16 @@ class VirtualPainter:
             # ── Teclado ────────────────────────────
             key = cv2.waitKey(1) & 0xFF
             if key in (ord('q'), 27):
-                self.mouse_ctrl.release_all(); break
+                break
             elif key == ord('1'):
-                self.mouse_ctrl.release_all(); self.app_mode = APP_MODE_PAINT
-                self._free_bg_cache = None
+                self.app_mode = APP_MODE_PAINT
                 self._notify("Modo: Pintura Libre", UI["mode_paint"])
             elif key == ord('2'):
                 if self.color_layer is not None:
-                    self.mouse_ctrl.release_all(); self.app_mode = APP_MODE_COLOR
-                    self._free_bg_cache = None
+                    self.app_mode = APP_MODE_COLOR
                     self._notify("Modo: Colorear", UI["mode_color"])
                 else:
                     self._notify("Carga una imagen primero (tecla O)", UI["vivo_rojo"])
-            elif key == ord('3'):     self._toggle_free_mode()
             elif key in (ord('o'), ord('O')):
                 self.img_selector._load()
                 path = self.img_selector.show(self.W, self.H)

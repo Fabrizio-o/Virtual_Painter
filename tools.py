@@ -16,6 +16,34 @@ from ui_helpers import (
 
 
 # ─────────────────────────────────────────────
+#  TECLAS DE NAVEGACIÓN (multiplataforma)
+# ─────────────────────────────────────────────
+def _nav_key(raw):
+    """
+    Devuelve una cadena con la acción de navegación según la tecla pulsada.
+    Compatible con Linux (81/82/83/84) y Windows (224 + código extendido).
+    raw = cv2.waitKey(50)  — SIN enmascarar con & 0xFF
+    """
+    k = raw & 0xFF
+    # Flechas en Linux/macOS
+    if k == 81 or raw == 2424832:  return "LEFT"
+    if k == 83 or raw == 2555904:  return "RIGHT"
+    if k == 82 or raw == 2490368:  return "UP"
+    if k == 84 or raw == 2621440:  return "DOWN"
+    # WASD (compatibilidad)
+    if k == ord('a') or k == ord('A'): return "LEFT"
+    if k == ord('d') or k == ord('D'): return "RIGHT"
+    if k == ord('w') or k == ord('W'): return "UP"
+    if k == ord('s') or k == ord('S'): return "DOWN"
+    # Confirmación / cancelación
+    if k in (13, 32): return "CONFIRM"   # Enter / Espacio
+    if k == 27:       return "CANCEL"    # ESC
+    # Recarga
+    if k == ord('r') or k == ord('R'): return "RELOAD"
+    return None
+
+
+# ─────────────────────────────────────────────
 #  FLOOD FILL
 # ─────────────────────────────────────────────
 def flood_fill(image, seed_pt, fill_color, tolerance):
@@ -114,7 +142,7 @@ class ColorPicker:
         cv2.rectangle(canvas, (0, 0), (W, 70), (255, 240, 210), -1)
         cv2.putText(canvas, "SELECCIONA UN COLOR",
                     (mg, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (60, 120, 255), 2, cv2.LINE_AA)
-        cv2.putText(canvas, "Flechas/WASD  |  ENTER seleccionar  |  ESC cancelar",
+        cv2.putText(canvas, "Flechas  |  ENTER seleccionar  |  ESC cancelar",
                     (mg, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (120, 90, 60), 1, cv2.LINE_AA)
         for i, c in enumerate(self.colors):
             row = i // self.COLS; col = i % self.COLS
@@ -146,16 +174,17 @@ class ColorPicker:
         cv2.resizeWindow(win, W, H)
         while True:
             cv2.imshow(win, self._build_grid(W, H))
-            key = cv2.waitKey(50) & 0xFF
+            raw = cv2.waitKey(50)
+            nav = _nav_key(raw)
             n   = len(self.colors)
-            if key == 27:
+            if nav == "CANCEL":
                 cv2.destroyWindow(win); return None
-            elif key in (13, 32):
+            elif nav == "CONFIRM":
                 cv2.destroyWindow(win); return self.colors[self.selected]
-            elif key in (81, ord('a')): self.selected = (self.selected - 1) % n
-            elif key in (83, ord('d')): self.selected = (self.selected + 1) % n
-            elif key in (82, ord('w')): self.selected = max(0, self.selected - self.COLS)
-            elif key in (84, ord('s')): self.selected = min(n-1, self.selected + self.COLS)
+            elif nav == "LEFT":  self.selected = (self.selected - 1) % n
+            elif nav == "RIGHT": self.selected = (self.selected + 1) % n
+            elif nav == "UP":    self.selected = max(0, self.selected - self.COLS)
+            elif nav == "DOWN":  self.selected = min(n-1, self.selected + self.COLS)
 
 
 # ─────────────────────────────────────────────
@@ -202,7 +231,7 @@ class ImageSelector:
         draw_gradient_bar(bg, 0, 82, W, 85, UI["vivo_cyan"], UI["vivo_rosa"])
         put_text_centered(bg, "SELECCIONA UNA IMAGEN PARA COLOREAR",
                           W//2, 32, 0.9, (60, 120, 255), 2)
-        put_text_centered(bg, "Flechas/WASD  |  ENTER seleccionar  |  ESC cancelar",
+        put_text_centered(bg, "Flechas  |  ENTER seleccionar  |  ESC cancelar",
                           W//2, 62, 0.48, (100, 80, 60), 1)
         mg = 20; pad = 14
         for i, (thumb, path) in enumerate(zip(self.thumbnails, self.image_paths)):
@@ -234,20 +263,21 @@ class ImageSelector:
         cv2.resizeWindow(win, W, H)
         while True:
             cv2.imshow(win, self._build_grid(W, H))
-            key = cv2.waitKey(50) & 0xFF
+            raw = cv2.waitKey(50)
+            nav = _nav_key(raw)
             n   = len(self.image_paths)
             if n == 0:
-                if key in (ord('r'), ord('R')):
+                if nav == "RELOAD":
                     self._load()
-                elif key == 27:
+                elif nav == "CANCEL":
                     cv2.destroyWindow(win); return None
                 continue
-            if key == 27:
+            if nav == "CANCEL":
                 cv2.destroyWindow(win); return None
-            elif key in (13, 32):
+            elif nav == "CONFIRM":
                 cv2.destroyWindow(win); return self.image_paths[self.selected]
-            elif key in (81, ord('a')): self.selected = (self.selected - 1) % n
-            elif key in (83, ord('d')): self.selected = (self.selected + 1) % n
-            elif key in (82, ord('w')): self.selected = max(0, self.selected - self.COLS)
-            elif key in (84, ord('s')): self.selected = min(n-1, self.selected + self.COLS)
-            elif key in (ord('r'), ord('R')): self._load()
+            elif nav == "LEFT":   self.selected = (self.selected - 1) % n
+            elif nav == "RIGHT":  self.selected = (self.selected + 1) % n
+            elif nav == "UP":     self.selected = max(0, self.selected - self.COLS)
+            elif nav == "DOWN":   self.selected = min(n-1, self.selected + self.COLS)
+            elif nav == "RELOAD": self._load()
