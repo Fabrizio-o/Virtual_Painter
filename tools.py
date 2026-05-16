@@ -6,12 +6,11 @@ import cv2
 import numpy as np
 import glob
 import os
-import time
 
 from config import UI
 from ui_helpers import (
     put_text_centered, draw_rounded_rect, draw_neon_border,
-    draw_gradient_bar, draw_clouds_fast,
+    draw_gradient_bar,
 )
 
 
@@ -20,27 +19,60 @@ from ui_helpers import (
 # ─────────────────────────────────────────────
 def _nav_key(raw):
     """
-    Devuelve una cadena con la acción de navegación según la tecla pulsada.
-    Compatible con Linux (81/82/83/84) y Windows (224 + código extendido).
-    raw = cv2.waitKey(50)  — SIN enmascarar con & 0xFF
+    Detecta teclas de navegación a partir del valor RAW de cv2.waitKeyEx().
+    No aplicar & 0xFF antes de llamar esta función.
+
+    Valores de flechas por plataforma:
+      Linux  (sin máscara): Izq=65361  Der=65363  Arr=65362  Abj=65364
+      Windows(sin máscara): Izq=2424832 Der=2555904 Arr=2490368 Abj=2621440
+      macOS  (sin máscara): Izq=63234  Der=63235  Arr=63232  Abj=63233
+      Con &0xFF (Linux):    Izq=81     Der=83     Arr=82     Abj=84
     """
+    if raw < 0:
+        return None
+
+    # Flechas: verificar valor COMPLETO primero (sin máscara)
+    if raw in (65361, 2424832, 63234): return "LEFT"
+    if raw in (65363, 2555904, 63235): return "RIGHT"
+    if raw in (65362, 2490368, 63232): return "UP"
+    if raw in (65364, 2621440, 63233): return "DOWN"
+
     k = raw & 0xFF
-    # Flechas en Linux/macOS
-    if k == 81 or raw == 2424832:  return "LEFT"
-    if k == 83 or raw == 2555904:  return "RIGHT"
-    if k == 82 or raw == 2490368:  return "UP"
-    if k == 84 or raw == 2621440:  return "DOWN"
+
+    # Flechas ya enmascaradas (algunos entornos Linux)
+    if k == 81: return "LEFT"
+    if k == 83: return "RIGHT"
+    if k == 82: return "UP"
+    if k == 84: return "DOWN"
+
     # WASD (compatibilidad)
-    if k == ord('a') or k == ord('A'): return "LEFT"
-    if k == ord('d') or k == ord('D'): return "RIGHT"
-    if k == ord('w') or k == ord('W'): return "UP"
-    if k == ord('s') or k == ord('S'): return "DOWN"
-    # Confirmación / cancelación
-    if k in (13, 32): return "CONFIRM"   # Enter / Espacio
-    if k == 27:       return "CANCEL"    # ESC
-    # Recarga
-    if k == ord('r') or k == ord('R'): return "RELOAD"
+    if k in (ord('a'), ord('A')): return "LEFT"
+    if k in (ord('d'), ord('D')): return "RIGHT"
+    if k in (ord('w'), ord('W')): return "UP"
+    if k in (ord('s'), ord('S')): return "DOWN"
+
+    if k in (13, 32): return "CONFIRM"
+    if k == 27:       return "CANCEL"
+    if k in (ord('r'), ord('R')): return "RELOAD"
     return None
+
+
+# ─────────────────────────────────────────────
+#  BARRA DE DESPLAZAMIENTO
+# ─────────────────────────────────────────────
+def _draw_scrollbar(canvas, x, y_top, track_h, scroll_y, max_scroll, total_h):
+    """Dibuja una barra de desplazamiento vertical."""
+    if max_scroll <= 0:
+        return
+    # Pista
+    cv2.rectangle(canvas, (x, y_top), (x+10, y_top+track_h), (210, 200, 185), -1)
+    cv2.rectangle(canvas, (x, y_top), (x+10, y_top+track_h), (170, 155, 135), 1)
+    # Thumb
+    viewport_h = total_h - max_scroll
+    thumb_h    = max(24, int(track_h * viewport_h / total_h))
+    thumb_y    = y_top + int((track_h - thumb_h) * scroll_y / max_scroll)
+    cv2.rectangle(canvas, (x+1, thumb_y),   (x+9, thumb_y+thumb_h), (100, 80, 55), -1)
+    cv2.rectangle(canvas, (x+1, thumb_y),   (x+9, thumb_y+thumb_h), (70, 50, 30),  1)
 
 
 # ─────────────────────────────────────────────
@@ -75,9 +107,12 @@ def flood_fill_smooth(image, seed_pt, fill_color, tolerance):
 #  SELECTOR DE COLORES
 # ─────────────────────────────────────────────
 class ColorPicker:
-    COLS      = 6
-    SWATCH_W  = 90
-    SWATCH_H  = 60
+    COLS     = 6
+    SWATCH_W = 90
+    SWATCH_H = 60
+    ROW_H    = 95      # SWATCH_H + espacio para etiqueta + padding
+    HEADER_H = 78
+    FOOTER_H = 38
     BG_COLOR  = (255, 249, 230)
     SEL_COLOR = (80,  222, 100)
 
@@ -133,21 +168,47 @@ class ColorPicker:
     ]
 
     def __init__(self):
-        self.colors   = self.EXTENDED_COLORS
-        self.selected = 0
+        self.colors    = self.EXTENDED_COLORS
+        self.selected  = 0
+        self._scroll_y = 0
+
+    # ── Auto-scroll para mantener la selección visible ────────
+    def _update_scroll(self, viewport_h):
+        row        = self.selected // self.COLS
+        top        = row * self.ROW_H
+        bot        = top + self.ROW_H
+        n_rows     = (len(self.colors) + self.COLS - 1) // self.COLS
+        max_scroll = max(0, n_rows * self.ROW_H - viewport_h)
+
+        if top < self._scroll_y:
+            self._scroll_y = top
+        elif bot > self._scroll_y + viewport_h:
+            self._scroll_y = bot - viewport_h
+
+        self._scroll_y = int(np.clip(self._scroll_y, 0, max_scroll))
 
     def _build_grid(self, W, H):
+        viewport_h = H - self.HEADER_H - self.FOOTER_H
+        self._update_scroll(viewport_h)
+
+        n_rows     = (len(self.colors) + self.COLS - 1) // self.COLS
+        total_h    = n_rows * self.ROW_H
+        max_scroll = max(0, total_h - viewport_h)
+        mg = 20
+
         canvas = np.full((H, W, 3), self.BG_COLOR, dtype=np.uint8)
-        mg = 20; n = len(self.colors)
-        cv2.rectangle(canvas, (0, 0), (W, 70), (255, 240, 210), -1)
-        cv2.putText(canvas, "SELECCIONA UN COLOR",
-                    (mg, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (60, 120, 255), 2, cv2.LINE_AA)
-        cv2.putText(canvas, "Flechas  |  ENTER seleccionar  |  ESC cancelar",
-                    (mg, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (120, 90, 60), 1, cv2.LINE_AA)
+
+        # ── Swatches ─────────────────────────────────────────────
         for i, c in enumerate(self.colors):
-            row = i // self.COLS; col = i % self.COLS
-            x = mg + col*(self.SWATCH_W+12)
-            y = 90 + row*(self.SWATCH_H+30)
+            row = i // self.COLS
+            col = i % self.COLS
+            x   = mg + col * (self.SWATCH_W + 12)
+            y   = self.HEADER_H + row * self.ROW_H - self._scroll_y
+
+            # Saltar si está totalmente fuera del viewport
+            if y + self.ROW_H <= self.HEADER_H or y >= H - self.FOOTER_H:
+                continue
+
             if i == self.selected:
                 cv2.rectangle(canvas,
                               (x-6, y-6), (x+self.SWATCH_W+6, y+self.SWATCH_H+6),
@@ -156,16 +217,39 @@ class ColorPicker:
                 cv2.rectangle(canvas,
                               (x-2, y-2), (x+self.SWATCH_W+2, y+self.SWATCH_H+2),
                               (200, 180, 150), 1)
+
             cv2.rectangle(canvas, (x, y), (x+self.SWATCH_W, y+self.SWATCH_H), c["bgr"], -1)
             cv2.rectangle(canvas, (x, y), (x+self.SWATCH_W, y+self.SWATCH_H), (180, 160, 130), 1)
-            name = c["name"][:12]
-            (tw, _), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
-            cv2.putText(canvas, name,
-                        (x+(self.SWATCH_W-tw)//2, y+self.SWATCH_H+18),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 60, 40), 1, cv2.LINE_AA)
-        cv2.rectangle(canvas, (0, H-35), (W, H), (255, 240, 210), -1)
-        cv2.putText(canvas, f"{n} colores disponibles",
-                    (mg, H-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (120, 90, 60), 1, cv2.LINE_AA)
+
+            label_y = y + self.SWATCH_H + 18
+            if self.HEADER_H < label_y < H - self.FOOTER_H:
+                name = c["name"][:12]
+                (tw, _), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+                cv2.putText(canvas, name,
+                            (x + (self.SWATCH_W - tw) // 2, label_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 60, 40), 1, cv2.LINE_AA)
+
+        # ── Scrollbar ────────────────────────────────────────────
+        _draw_scrollbar(canvas, W-18, self.HEADER_H, viewport_h,
+                        self._scroll_y, max_scroll, total_h)
+
+        # ── Header encima del contenido (tapa el desborde) ───────
+        cv2.rectangle(canvas, (0, 0), (W, self.HEADER_H), (255, 240, 210), -1)
+        cv2.rectangle(canvas, (0, self.HEADER_H-3), (W, self.HEADER_H), (200, 180, 150), -1)
+        cv2.putText(canvas, "SELECCIONA UN COLOR",
+                    (mg, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (60, 120, 255), 2, cv2.LINE_AA)
+        cv2.putText(canvas, "Flechas para navegar  |  ENTER seleccionar  |  ESC cancelar",
+                    (mg, 66), cv2.FONT_HERSHEY_SIMPLEX, 0.47, (120, 90, 60), 1, cv2.LINE_AA)
+
+        # ── Footer encima del contenido (tapa el desborde) ───────
+        cv2.rectangle(canvas, (0, H-self.FOOTER_H), (W, H), (255, 240, 210), -1)
+        cv2.rectangle(canvas, (0, H-self.FOOTER_H), (W, H-self.FOOTER_H+3), (200, 180, 150), -1)
+        sel_name = self.colors[self.selected]["name"]
+        cv2.putText(canvas,
+                    f"{len(self.colors)} colores  |  Seleccionado: {sel_name}",
+                    (mg, H - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (120, 90, 60), 1, cv2.LINE_AA)
+
         return canvas
 
     def show(self, W=1280, H=720):
@@ -174,7 +258,7 @@ class ColorPicker:
         cv2.resizeWindow(win, W, H)
         while True:
             cv2.imshow(win, self._build_grid(W, H))
-            raw = cv2.waitKey(50)
+            raw = cv2.waitKeyEx(50)
             nav = _nav_key(raw)
             n   = len(self.colors)
             if nav == "CANCEL":
@@ -184,16 +268,20 @@ class ColorPicker:
             elif nav == "LEFT":  self.selected = (self.selected - 1) % n
             elif nav == "RIGHT": self.selected = (self.selected + 1) % n
             elif nav == "UP":    self.selected = max(0, self.selected - self.COLS)
-            elif nav == "DOWN":  self.selected = min(n-1, self.selected + self.COLS)
+            elif nav == "DOWN":  self.selected = min(n - 1, self.selected + self.COLS)
 
 
 # ─────────────────────────────────────────────
 #  SELECTOR DE IMÁGENES
 # ─────────────────────────────────────────────
 class ImageSelector:
-    THUMB_W = 210
-    THUMB_H = 158
-    COLS    = 5
+    THUMB_W  = 210
+    THUMB_H  = 158
+    COLS     = 5
+    PAD      = 14
+    LABEL_H  = 26
+    HEADER_H = 92
+    FOOTER_H = 42
 
     def __init__(self, images_dir, extensions):
         self.images_dir  = images_dir
@@ -201,7 +289,12 @@ class ImageSelector:
         self.image_paths = []
         self.thumbnails  = []
         self.selected    = 0
+        self._scroll_y   = 0
         self._load()
+
+    @property
+    def _row_h(self):
+        return self.THUMB_H + self.PAD + self.LABEL_H  # 198 px
 
     def _load(self):
         self.image_paths = []
@@ -216,45 +309,98 @@ class ImageSelector:
                                 interpolation=cv2.INTER_AREA)
             else:
                 th = np.full((self.THUMB_H, self.THUMB_W, 3), 230, dtype=np.uint8)
-                put_text_centered(th, "?", self.THUMB_W//2, self.THUMB_H//2,
+                put_text_centered(th, "?", self.THUMB_W // 2, self.THUMB_H // 2,
                                   1.5, (150, 100, 60), 3)
             self.thumbnails.append(th)
 
+    # ── Auto-scroll para mantener la selección visible ────────
+    def _update_scroll(self, viewport_h):
+        row        = self.selected // self.COLS
+        top        = row * self._row_h
+        bot        = top + self._row_h
+        n_rows     = (len(self.image_paths) + self.COLS - 1) // self.COLS
+        max_scroll = max(0, n_rows * self._row_h - viewport_h)
+
+        if top < self._scroll_y:
+            self._scroll_y = top
+        elif bot > self._scroll_y + viewport_h:
+            self._scroll_y = bot - viewport_h
+
+        self._scroll_y = int(np.clip(self._scroll_y, 0, max_scroll))
+
     def _build_grid(self, W, H):
+        viewport_h = H - self.HEADER_H - self.FOOTER_H
+        if self.image_paths:
+            self._update_scroll(viewport_h)
+
+        n_rows     = max(1, (len(self.image_paths) + self.COLS - 1) // self.COLS)
+        total_h    = n_rows * self._row_h
+        max_scroll = max(0, total_h - viewport_h)
+        mg = 20
+
+        # Fondo degradado
         bg = np.zeros((H, W, 3), dtype=np.uint8)
         y_idx = np.arange(H, dtype=np.float32) / H
         bg[:, :, 0] = (255*(1-y_idx) + 230*y_idx).astype(np.uint8)[:, np.newaxis]
         bg[:, :, 1] = (210*(1-y_idx) + 245*y_idx).astype(np.uint8)[:, np.newaxis]
         bg[:, :, 2] = (135*(1-y_idx) + 255*y_idx).astype(np.uint8)[:, np.newaxis]
-        draw_clouds_fast(bg, time.time())
-        cv2.rectangle(bg, (0, 0), (W, 85), (255, 249, 230), -1)
-        draw_gradient_bar(bg, 0, 82, W, 85, UI["vivo_cyan"], UI["vivo_rosa"])
-        put_text_centered(bg, "SELECCIONA UNA IMAGEN PARA COLOREAR",
-                          W//2, 32, 0.9, (60, 120, 255), 2)
-        put_text_centered(bg, "Flechas  |  ENTER seleccionar  |  ESC cancelar",
-                          W//2, 62, 0.48, (100, 80, 60), 1)
-        mg = 20; pad = 14
+
+        # ── Miniaturas ───────────────────────────────────────────
         for i, (thumb, path) in enumerate(zip(self.thumbnails, self.image_paths)):
-            row = i // self.COLS; col = i % self.COLS
-            x = mg + col*(self.THUMB_W + pad)
-            y = 98 + row*(self.THUMB_H + pad + 26)
-            if y + self.THUMB_H + 26 > H - 40:
-                break
+            row = i // self.COLS
+            col = i % self.COLS
+            x   = mg + col * (self.THUMB_W + self.PAD)
+            y   = self.HEADER_H + row * self._row_h - self._scroll_y
             tw, th = self.THUMB_W, self.THUMB_H
+
+            # Saltar si está totalmente fuera del viewport
+            if y + self._row_h <= self.HEADER_H or y >= H - self.FOOTER_H:
+                continue
+
             if i == self.selected:
                 draw_rounded_rect(bg, x-6, y-6, x+tw+6, y+th+6, 6, UI["vivo_verde"], -1)
                 draw_rounded_rect(bg, x-6, y-6, x+tw+6, y+th+6, 6, (235, 248, 255), -1)
                 draw_neon_border(bg, x-4, y-4, x+tw+4, y+th+4, UI["vivo_verde"], 3)
             else:
                 cv2.rectangle(bg, (x-2, y-2), (x+tw+2, y+th+2), UI["border_claro"], 1)
-            bg[y:y+th, x:x+tw] = thumb
-            fname  = os.path.basename(path)[:24]
-            col_t  = UI["vivo_verde"] if i == self.selected else UI["text_claro"]
-            cv2.putText(bg, fname, (x, y+th+20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, col_t, 1, cv2.LINE_AA)
-        cv2.rectangle(bg, (0, H-38), (W, H), (255, 249, 230), -1)
-        put_text_centered(bg, f"[R] Recargar  |  {len(self.image_paths)} imagen(es)",
-                          W//2, H-19, 0.44, UI["text_claro"], 1)
+
+            # Pegar miniatura recortando al viewport
+            y_clip_top = max(y, self.HEADER_H)
+            y_clip_bot = min(y + th, H - self.FOOTER_H)
+            if y_clip_top < y_clip_bot:
+                src_top = y_clip_top - y
+                src_bot = y_clip_bot - y
+                bg[y_clip_top:y_clip_bot, x:x+tw] = thumb[src_top:src_bot, :]
+
+            label_y = y + th + 20
+            if self.HEADER_H < label_y < H - self.FOOTER_H:
+                fname = os.path.basename(path)[:24]
+                col_t = UI["vivo_verde"] if i == self.selected else UI["text_claro"]
+                cv2.putText(bg, fname, (x, label_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.40, col_t, 1, cv2.LINE_AA)
+
+        # ── Scrollbar ────────────────────────────────────────────
+        _draw_scrollbar(bg, W-18, self.HEADER_H, viewport_h,
+                        self._scroll_y, max_scroll, total_h)
+
+        # ── Header encima del contenido (tapa el desborde) ───────
+        cv2.rectangle(bg, (0, 0), (W, self.HEADER_H), (255, 249, 230), -1)
+        draw_gradient_bar(bg, 0, self.HEADER_H-4, W, self.HEADER_H, UI["vivo_cyan"], UI["vivo_rosa"])
+        put_text_centered(bg, "SELECCIONA UNA IMAGEN PARA COLOREAR",
+                          W // 2, 32, 0.9, (60, 120, 255), 2)
+        put_text_centered(bg, "Flechas para navegar  |  ENTER seleccionar  |  ESC cancelar",
+                          W // 2, 62, 0.47, (100, 80, 60), 1)
+
+        # ── Footer encima del contenido (tapa el desborde) ───────
+        cv2.rectangle(bg, (0, H-self.FOOTER_H), (W, H), (255, 249, 230), -1)
+        cv2.rectangle(bg, (0, H-self.FOOTER_H), (W, H-self.FOOTER_H+3), (180, 165, 140), -1)
+        sel_name = (os.path.basename(self.image_paths[self.selected])
+                    if self.image_paths else "ninguna")
+        put_text_centered(bg,
+                          f"[R] Recargar  |  {len(self.image_paths)} imagen(es)  |  "
+                          f"Seleccionada: {sel_name}",
+                          W // 2, H - 16, 0.43, UI["text_claro"], 1)
+
         return bg
 
     def show(self, W=1280, H=720):
@@ -263,7 +409,7 @@ class ImageSelector:
         cv2.resizeWindow(win, W, H)
         while True:
             cv2.imshow(win, self._build_grid(W, H))
-            raw = cv2.waitKey(50)
+            raw = cv2.waitKeyEx(50)
             nav = _nav_key(raw)
             n   = len(self.image_paths)
             if n == 0:
@@ -279,5 +425,5 @@ class ImageSelector:
             elif nav == "LEFT":   self.selected = (self.selected - 1) % n
             elif nav == "RIGHT":  self.selected = (self.selected + 1) % n
             elif nav == "UP":     self.selected = max(0, self.selected - self.COLS)
-            elif nav == "DOWN":   self.selected = min(n-1, self.selected + self.COLS)
+            elif nav == "DOWN":   self.selected = min(n - 1, self.selected + self.COLS)
             elif nav == "RELOAD": self._load()

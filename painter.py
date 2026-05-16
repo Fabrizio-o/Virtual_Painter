@@ -571,12 +571,8 @@ class VirtualPainter:
         return self._sky_base
 
     def _merge_canvas_fast(self, frame):
-        if (self._sky_with_clouds is None or
-                self._frame_counter - self._cloud_frame_cnt >= self._cloud_interval):
-            sky = self._get_sky_base().copy()
-            draw_clouds_fast(sky, time.time())
-            self._sky_with_clouds  = sky
-            self._cloud_frame_cnt  = self._frame_counter
+        if self._sky_with_clouds is None:
+            self._sky_with_clouds = self._get_sky_base().copy()
 
         output = self._sky_with_clouds.copy()
         op     = self.cfg["canvas_opacity"]
